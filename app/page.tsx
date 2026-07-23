@@ -3,7 +3,7 @@ import { DigitalServiceApp } from "./DigitalServiceApp";
 
 export const metadata: Metadata = {
   description:
-    "Create, review, sign, and archive professional equipment service reports.",
+    "Verified July 2026 service reports for Changi General Hospital and Tuas Power Generation.",
 };
 
 export default function Home() {

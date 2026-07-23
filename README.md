@@ -1,24 +1,21 @@
 # Promach Digital Service Reports
 
-A responsive Next.js application concept for creating, reviewing, signing, and
-archiving professional equipment service reports.
+A responsive Next.js application for reviewing source-backed Promach service
+records and generating structured report PDFs.
 
-## Included in this product prototype
+## Current verified dataset
 
-- Admin and client sign-in journeys
-- Responsive admin and client dashboards
-- Report status, search, and history views
-- Four-step service-report creation workflow
-- Equipment-driven checklist and measurement entry
-- Client review and touch/mouse/stylus signature capture
-- Master-data, technician, and company-setting screens
-- Desktop, tablet, and mobile navigation patterns
-- Accessible labels, focus behavior, and reduced-motion support
+- Changi General Hospital report 4122 from the supplied 9-page scan
+- Tuas Power Generation report 3930 from the supplied service-report image
+- Seven equipment service records
+- Checklist results, readings, technicians, acknowledgements, and follow-up
+- Original source-document access
+- Per-report PDF generation
+- Explicit transcription-review notes where handwriting is unclear
 
-The current interface uses realistic demonstration data so the complete product
-journey can be reviewed. Production authentication, database persistence,
-private file storage, email notifications, and PDF generation are specified in
-the implementation plan and belong to the next engineering phases.
+Previous demonstration customers, reports, equipment, people, and measurements
+have been removed. The application contains only facts transcribed from the
+supplied source files.
 
 ## Implementation plan
 

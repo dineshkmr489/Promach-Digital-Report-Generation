@@ -25,9 +25,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: baseUrl,
-    title: "Promach DSR | Digital Service Reports",
+    title: "Promach DSR | Verified Service Records",
     description:
-      "A secure digital service report workspace for service teams and their clients.",
+      "Verified July 2026 service records transcribed from supplied Promach source documents.",
     icons: {
       icon: "/favicon.png",
       shortcut: "/favicon.png",
@@ -35,13 +35,13 @@ export async function generateMetadata(): Promise<Metadata> {
     openGraph: {
       type: "website",
       title: "Promach DSR",
-      description: "Every service visit. Clear, signed, complete.",
+      description: "Source-backed service records. Clear, signed, complete.",
       images: [{ url: socialImage, width: 1731, height: 909 }],
     },
     twitter: {
       card: "summary_large_image",
       title: "Promach DSR",
-      description: "Every service visit. Clear, signed, complete.",
+      description: "Source-backed service records. Clear, signed, complete.",
       images: [socialImage],
     },
   };
