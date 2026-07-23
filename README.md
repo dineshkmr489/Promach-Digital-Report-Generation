@@ -46,6 +46,12 @@ npm run lint
 node --test tests/rendered-html.test.mjs
 ```
 
+Regenerate the two checked PDF samples from the verified records:
+
+```bash
+npm run generate:pdfs
+```
+
 ## Technology
 
 - Next.js / React / TypeScript
