@@ -504,9 +504,65 @@ a { color: inherit; text-decoration: none; }
 .report-status-summary { display: flex; gap: 9px; margin-bottom: 14px; }
 .report-status-summary span { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 20px; padding: 6px 11px 6px 7px; background: white; color: var(--muted); font-size: 14px; }
 .report-status-summary strong { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: var(--forest); color: white; font-size: 14px; }
-.operational-reports { padding: 0 20px 20px; }
-.report-table-head { display: grid; grid-template-columns: 74px minmax(180px,1fr) 88px 0 auto 18px; gap: 12px; padding: 14px 7px 9px; color: var(--muted); font-size: 14px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
-.report-table-head span:nth-child(4) { display: none; }
+.operational-reports {
+  --report-table-columns: 96px minmax(280px, 1fr) minmax(145px, .32fr) minmax(180px, .38fr) 36px;
+  overflow: hidden;
+  padding: 0;
+}
+.report-table-head {
+  display: grid;
+  grid-template-columns: var(--report-table-columns);
+  align-items: center;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+  padding: 15px 20px;
+  background: #f7faf8;
+  color: #60766e;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.operational-reports .operational-report-row {
+  width: 100%;
+  min-height: 90px;
+  grid-template-columns: var(--report-table-columns);
+  gap: 18px;
+  border-top: 0;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 15px 20px;
+  transition: background .16s ease, box-shadow .16s ease;
+}
+.operational-reports .operational-report-row:last-child { border-bottom: 0; }
+.operational-reports .operational-report-row:hover {
+  position: relative;
+  z-index: 1;
+  background: #f3f8f5;
+  box-shadow: inset 4px 0 0 var(--green);
+}
+.operational-reports .report-number > small,
+.operational-reports .report-date > small { display: none; }
+.operational-reports .report-number strong {
+  margin-top: 0;
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #edf4f0;
+  color: var(--forest);
+  text-align: center;
+}
+.operational-reports .report-client strong,
+.operational-reports .report-date strong { margin-top: 0; }
+.operational-reports .report-date strong { overflow: visible; text-overflow: clip; }
+.operational-reports .workflow-status { min-height: 32px; justify-self: start; padding: 0 11px; }
+.operational-reports .operational-report-row > svg {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  padding: 6px;
+  background: #edf3f0;
+  color: var(--forest-2);
+}
+.operational-reports .table-pagination { margin: 0; padding: 16px 20px 18px; background: #fbfcfb; }
 .create-layout { display: grid; grid-template-columns: 245px minmax(0,1fr); align-items: start; gap: 15px; }
 .create-steps { display: grid; gap: 6px; }
 .create-steps > button { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; border: 1px solid transparent; border-radius: 11px; padding: 11px; background: transparent; color: var(--muted); text-align: left; }
@@ -1042,11 +1098,11 @@ a { color: inherit; text-decoration: none; }
   .topbar-actions .dataset-pill { display: none; }
   .workflow-steps { display: grid; width: 100%; grid-template-columns: 1fr 1fr; }
   .workflow-steps > svg { display: none; }
-  .operational-report-row { position: relative; display: block; min-height: 112px; padding: 12px 90px 12px 5px; }
-  .operational-report-row .report-number { position: absolute; top: 12px; right: 8px; }
-  .operational-report-row .report-date { display: inline-block; margin: 10px 12px 0 0; }
-  .operational-report-row .workflow-status { margin-top: 10px; }
-  .operational-report-row > svg { position: absolute; right: 8px; bottom: 12px; }
+  .operational-reports .operational-report-row { position: relative; display: block; min-height: 138px; padding: 16px 92px 16px 16px; }
+  .operational-reports .operational-report-row .report-number { position: absolute; top: 16px; right: 16px; }
+  .operational-reports .operational-report-row .report-date { display: inline-block; margin: 12px 12px 0 0; }
+  .operational-reports .operational-report-row .workflow-status { margin-top: 12px; }
+  .operational-reports .operational-report-row > svg { position: absolute; right: 16px; bottom: 16px; }
   .report-table-head { display: none; }
   .operational-reports { padding-top: 8px; }
   .create-steps { grid-template-columns: 1fr; }

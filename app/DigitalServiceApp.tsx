@@ -743,7 +743,11 @@ function Reports({
       </section>
       <section className="real-panel reports-page operational-reports">
         <div className="report-table-head">
-          <span>Report</span><span>Client and site</span><span>Service date</span><span>Equipment</span><span>Status</span><span />
+          <span>Report</span>
+          <span>Client and site</span>
+          <span>Service date</span>
+          <span>Status</span>
+          <span aria-hidden="true" />
         </div>
         <div>
           {visibleReports.map((report) => (
