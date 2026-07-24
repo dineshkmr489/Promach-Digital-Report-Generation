@@ -404,7 +404,6 @@ export function DigitalServiceApp({
             <MasterData
               workspace={workspace}
               tab={masterTab}
-              onTabChange={setMasterTab}
               onWorkspaceChange={setWorkspace}
               onNotice={toast}
             />
@@ -1272,13 +1271,11 @@ function FormSectionHeading({
 function MasterData({
   workspace,
   tab,
-  onTabChange,
   onWorkspaceChange,
   onNotice,
 }: {
   workspace: WorkspaceSnapshot;
   tab: MasterTab;
-  onTabChange: (tab: MasterTab) => void;
   onWorkspaceChange: (workspace: WorkspaceSnapshot) => void;
   onNotice: (message: string) => void;
 }) {
@@ -1308,32 +1305,14 @@ function MasterData({
           </button>
         }
       />
-      <div className="master-layout">
-        <nav className="master-tabs" aria-label="Master data sections">
-          {masterTabs.map((item) => {
-            const Icon = item.icon;
-            const count =
-              item.id === "checklist-templates"
-                ? workspace.checklistTemplates.length
-                : item.id === "service-types"
-                  ? workspace.serviceTypes.length
-                : workspace[item.id].length;
-            return (
-              <button className={tab === item.id ? "active" : ""} key={item.id} onClick={() => onTabChange(item.id)} type="button">
-                <Icon size={17} /><span>{item.label}</span><i>{count}</i>
-              </button>
-            );
-          })}
-        </nav>
-        <section className="real-panel master-content">
-          <MasterList
-            tab={tab}
-            workspace={workspace}
-            onEdit={setEditing}
-            onDelete={setDeleting}
-          />
-        </section>
-      </div>
+      <section className="real-panel master-content">
+        <MasterList
+          tab={tab}
+          workspace={workspace}
+          onEdit={setEditing}
+          onDelete={setDeleting}
+        />
+      </section>
       {adding && (
         <MasterDataDialog
           entity={tab}

@@ -565,12 +565,6 @@ a { color: inherit; text-decoration: none; }
 .real-primary-button:disabled, .real-secondary-button:disabled { cursor: not-allowed; opacity: .45; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.master-layout { display: grid; grid-template-columns: 190px minmax(0,1fr); align-items: start; gap: 14px; }
-.master-tabs { display: grid; gap: 4px; }
-.master-tabs button { display: grid; min-height: 42px; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; border: 0; border-radius: 9px; padding: 0 10px; background: transparent; color: var(--muted); font-size: 9px; font-weight: 750; text-align: left; }
-.master-tabs button i { display: grid; min-width: 20px; height: 18px; place-items: center; border-radius: 8px; background: #e7ecea; font-size: 7px; font-style: normal; }
-.master-tabs button.active { background: var(--forest); color: white; }
-.master-tabs button.active i { background: rgba(255,255,255,.12); }
 .master-content { min-height: 500px; padding: 17px; }
 .master-card-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
 .master-card-grid article { position: relative; min-width: 0; border: 1px solid var(--line-soft); border-radius: 11px; padding: 14px; }
@@ -1003,12 +997,10 @@ a { color: inherit; text-decoration: none; }
   .login-story { padding: 34px; }
   .login-message h1 { font-size: 42px; }
   .login-workflow { grid-template-columns: 1fr; }
-  .create-layout, .master-layout { grid-template-columns: 1fr; }
+  .create-layout { grid-template-columns: 1fr; }
   .create-steps { grid-template-columns: repeat(3,1fr); }
   .create-steps > button { grid-template-columns: auto 1fr; }
   .master-shortcut { grid-column: span 3; }
-  .master-tabs { grid-template-columns: repeat(6,1fr); overflow-x: auto; }
-  .master-tabs button { min-width: 120px; }
 }
 
 @media (max-width: 700px) {
