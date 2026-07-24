@@ -15,8 +15,7 @@ export type ReportStatus =
 
 export type SignatureChannel =
   | "client_portal"
-  | "admin_device"
-  | "source_document";
+  | "admin_device";
 
 export type MasterEntity =
   | "clients"

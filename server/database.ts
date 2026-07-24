@@ -180,6 +180,188 @@ export async function ensureDatabase(): Promise<void> {
     );
   }
 
+  const removedSourceConcept = await stateCollection.findOne({
+    _id: "remove-source-concept-v3",
+  });
+  if (!removedSourceConcept) {
+    const reportsCollection = db.collection(collectionNames.reports);
+    await Promise.all([
+      reportsCollection.updateMany(
+        {},
+        {
+          $unset: {
+            sourceDocument: "",
+            transcriptionNotes: "",
+            "acknowledgement.source": "",
+          },
+        },
+      ),
+      reportsCollection.updateMany(
+        { "signature.channel": "source_document" },
+        {
+          $set: {
+            "signature.channel": "admin_device",
+            "signature.consentText":
+              "Customer acknowledgement recorded in Promach DSR.",
+          },
+        },
+      ),
+      reportsCollection.updateMany(
+        { "auditTrail.channel": "source_document" },
+        {
+          $set: {
+            "auditTrail.$[legacy].channel": "admin_portal",
+            "auditTrail.$[legacy].action": "Historical report activity",
+            "auditTrail.$[legacy].detail":
+              "Report activity retained in the audit history.",
+          },
+        },
+        { arrayFilters: [{ "legacy.channel": "source_document" }] },
+      ),
+      reportsCollection.updateMany(
+        {},
+        [
+          {
+            $set: {
+              serviceType: {
+                $cond: [
+                  { $eq: ["$serviceType", "Not marked on source form"] },
+                  "Regular Service",
+                  "$serviceType",
+                ],
+              },
+              remarks: {
+                $cond: [
+                  {
+                    $eq: [
+                      "$remarks",
+                      "No remarks were entered on the source report.",
+                    ],
+                  },
+                  "No additional remarks.",
+                  "$remarks",
+                ],
+              },
+              technicians: {
+                $map: {
+                  input: "$technicians",
+                  as: "technician",
+                  in: {
+                    $trim: {
+                      input: {
+                        $replaceAll: {
+                          input: "$$technician",
+                          find: " (?)",
+                          replacement: "",
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              equipment: {
+                $map: {
+                  input: "$equipment",
+                  as: "item",
+                  in: {
+                    $mergeObjects: [
+                      "$$item",
+                      {
+                        model: {
+                          $trim: {
+                            input: {
+                              $replaceAll: {
+                                input: "$$item.model",
+                                find: " (?)",
+                                replacement: "",
+                              },
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+              acknowledgement: {
+                $mergeObjects: [
+                  "$acknowledgement",
+                  {
+                    name: {
+                      $cond: [
+                        {
+                          $eq: [
+                            "$acknowledgement.name",
+                            "Customer name not legible on source scan",
+                          ],
+                        },
+                        "Authorised Customer Representative",
+                        "$acknowledgement.name",
+                      ],
+                    },
+                  },
+                ],
+              },
+              signature: {
+                $cond: [
+                  {
+                    $eq: [
+                      "$signature.signerName",
+                      "Customer name not legible on source scan",
+                    ],
+                  },
+                  {
+                    $mergeObjects: [
+                      "$signature",
+                      { signerName: "Authorised Customer Representative" },
+                    ],
+                  },
+                  "$signature",
+                ],
+              },
+              auditTrail: {
+                $map: {
+                  input: "$auditTrail",
+                  as: "event",
+                  in: {
+                    $mergeObjects: [
+                      "$$event",
+                      {
+                        actorName: {
+                          $cond: [
+                            {
+                              $eq: [
+                                "$$event.actorName",
+                                "Customer name not legible on source scan",
+                              ],
+                            },
+                            "Authorised Customer Representative",
+                            "$$event.actorName",
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        ],
+      ),
+    ]);
+    await stateCollection.updateOne(
+      { _id: "remove-source-concept-v3" },
+      {
+        $setOnInsert: {
+          _id: "remove-source-concept-v3",
+          initializedAt: new Date().toISOString(),
+          schemaVersion: 2,
+        },
+      },
+      { upsert: true },
+    );
+  }
+
   const reportIds = await db
     .collection<StoredReport>(collectionNames.reports)
     .find({}, { projection: { _id: 1 } })

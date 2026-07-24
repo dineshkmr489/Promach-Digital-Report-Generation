@@ -605,9 +605,7 @@ export async function buildServiceReportPdf(
       "Signing channel",
       signature.channel === "client_portal"
         ? "Secure client link"
-        : signature.channel === "admin_device"
-          ? "Promach admin device"
-          : "Original source document",
+        : "Promach admin device",
       metaX + (signature.dataUrl ? 52 : 82),
       y + 6,
       48,
@@ -658,28 +656,6 @@ export async function buildServiceReportPdf(
     doc.text(followUpLines, margin + 4, y + 5.8);
 
     y += followH + 5;
-  }
-
-  // Source Transcription Review
-  if (report.transcriptionNotes && report.transcriptionNotes.length > 0) {
-    y = ensureSpace(doc, report, assets, company, y, 25);
-
-    doc.setTextColor(...ink);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.2);
-    doc.text("Source transcription review", margin, y);
-    y += 4.5;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.2);
-    doc.setTextColor(...muted);
-
-    for (const item of report.transcriptionNotes) {
-      const lines = doc.splitTextToSize(`-  ${clean(item)}`, contentWidth);
-      y = ensureSpace(doc, report, assets, company, y, lines.length * 3.8 + 1);
-      doc.text(lines, margin, y);
-      y += lines.length * 3.8 + 1;
-    }
   }
 
   addFooter(doc, report, assets);

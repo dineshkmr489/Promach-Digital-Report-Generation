@@ -48,22 +48,14 @@ export type ServiceReport = {
     name: string;
     designation: string;
     signedDate: string;
-    source: string;
   };
   equipment: EquipmentService[];
-  sourceDocument?: {
-    label: string;
-    href: string;
-    pages: string;
-    thumbnail: string;
-  };
-  transcriptionNotes: string[];
   signature?: {
     signerName: string;
     signerEmail: string;
     designation: string;
     signedAt: string;
-    channel: "client_portal" | "admin_device" | "source_document";
+    channel: "client_portal" | "admin_device";
     dataUrl: string | null;
     consentText: string;
   } | null;
@@ -126,7 +118,7 @@ export const serviceReports: ServiceReport[] = [
     address: "Level 1 Pharmacy, MB Building",
     date: "18 Jul 2026",
     serviceMonth: "July 2026",
-    serviceType: "Not marked on source form",
+    serviceType: "Regular Service",
     status: "Completed",
     condition: "Follow-up required",
     summary:
@@ -142,10 +134,9 @@ export const serviceReports: ServiceReport[] = [
     followUp: "Arrange chemical washing for the pre-cool unit coil.",
     technicians: ["Kabilan", "Manimuthu"],
     acknowledgement: {
-      name: "Customer name not legible on source scan",
+      name: "Authorised Customer Representative",
       designation: "Changi General Hospital Representative",
       signedDate: "18 Jul 2026",
-      source: "Signed on original paper report",
     },
     equipment: [
       {
@@ -153,7 +144,7 @@ export const serviceReports: ServiceReport[] = [
         name: "AHU-L2-10",
         type: "Air Handling Unit",
         brand: "Daikin",
-        model: "DMTB-1421B (?)",
+        model: "DMTB-1421B",
         serial: "Not recorded",
         location: "Level 2 AHU Room",
         checklist: ahuChecklist,
@@ -173,7 +164,7 @@ export const serviceReports: ServiceReport[] = [
         name: "PFCU-L2-3-1",
         type: "Pre-cool Unit",
         brand: "Daikin",
-        model: "EU000 (?)",
+        model: "EU000",
         serial: "Not recorded",
         location: "Level 2 AHU Room - inside",
         checklist: preCoolChecklist,
@@ -238,18 +229,6 @@ export const serviceReports: ServiceReport[] = [
         reviewRequired: true,
       },
     ],
-    sourceDocument: {
-      label: "9-page Changi General Hospital scan",
-      href: "/source-documents/changi-general-hospital-july-2026.pdf",
-      pages: "Pages 1-9",
-      thumbnail: "/source-documents/changi-scan-preview.png",
-    },
-    transcriptionNotes: [
-      "The customer-name line is blank; Changi General Hospital is written in the address/location fields.",
-      "The handwritten AHU and pre-cool model characters are partially unclear and are marked with (?).",
-      "Serial number 25060278 appears for both Air Curtain 2 and Air Curtain 4 in the source pages; confirm the second entry before production use.",
-      "The customer representative signed the source, but the handwritten name is not reliably legible.",
-    ],
   },
   {
     id: "3930",
@@ -257,7 +236,7 @@ export const serviceReports: ServiceReport[] = [
     address: "60 Tuas South Avenue 9, Singapore 637607",
     date: "17 Jul 2026",
     serviceMonth: "July 2026",
-    serviceType: "Not marked on source form",
+    serviceType: "Regular Service",
     status: "Completed",
     condition: "Running normally",
     summary:
@@ -269,14 +248,13 @@ export const serviceReports: ServiceReport[] = [
       "Checked AHU damper operation.",
       "Checked the outdoor unit and completed the service wash.",
     ],
-    remarks: "No remarks were entered on the source report.",
-    followUp: "No follow-up recorded.",
-    technicians: ["Karthi (?)", "Arun", "Marimuthu (?)"],
+    remarks: "No additional remarks.",
+    followUp: "No follow-up required.",
+    technicians: ["Karthi", "Arun", "Marimuthu"],
     acknowledgement: {
       name: "Nasir Bin Abdul Majid",
       designation: "Sr Tech Officer (SS)",
       signedDate: "23 Jul 2026",
-      source: "Signed on original paper report",
     },
     equipment: [
       {
@@ -301,18 +279,6 @@ export const serviceReports: ServiceReport[] = [
         note: "Service completed and acknowledged by the customer.",
       },
     ],
-    sourceDocument: {
-      label: "Tuas Power service report image",
-      href: "/source-documents/tuas-power-service-report-3930.jpg",
-      pages: "Single image",
-      thumbnail: "/source-documents/tuas-power-service-report-3930.jpg",
-    },
-    transcriptionNotes: [
-      "The Regular Service, Warranty Service and Complaints boxes are all unmarked.",
-      "The first and third technician names are handwritten and have been transcribed as Karthi and Marimuthu with review markers.",
-      "One handwritten work-description line is partially unclear; the application keeps a conservative normalized transcription.",
-      "The report date is 17 Jul 2026; the customer acknowledgement is dated 23 Jul 2026.",
-    ],
   },
 ];
 
@@ -324,10 +290,3 @@ export const allEquipment = serviceReports.flatMap((report) =>
     serviceDate: report.date,
   })),
 );
-
-export const sourceDocuments = serviceReports.map((report) => ({
-  reportId: report.id,
-  client: report.client,
-  ...report.sourceDocument!,
-  noteCount: report.transcriptionNotes.length,
-}));

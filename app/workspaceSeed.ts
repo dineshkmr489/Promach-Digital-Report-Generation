@@ -117,9 +117,9 @@ const equipment: EquipmentRecord[] = serviceReports.flatMap(
 const technicianSeed = [
   ["tech-kabilan", "Kabilan"],
   ["tech-manimuthu", "Manimuthu"],
-  ["tech-karthi", "Karthi (?)"],
+  ["tech-karthi", "Karthi"],
   ["tech-arun", "Arun"],
-  ["tech-marimuthu", "Marimuthu (?)"],
+  ["tech-marimuthu", "Marimuthu"],
 ] as const;
 
 const technicians: TechnicianRecord[] = technicianSeed.map(([id, name]) => ({
@@ -159,7 +159,7 @@ function technicianId(name: string): string {
   );
 }
 
-function sourceAudit(
+function completedReportAudit(
   reportId: string,
   date: string,
   actorName: string,
@@ -168,20 +168,20 @@ function sourceAudit(
     {
       id: `audit-${reportId}-import`,
       reportId,
-      action: "Source report imported",
+      action: "Report created",
       actorName: "Promach Admin",
-      channel: "source_document",
+      channel: "admin_portal",
       createdAt: date,
-      detail: "Original signed paper record transcribed into the workspace.",
+      detail: "Completed service report added to the workspace.",
     },
     {
       id: `audit-${reportId}-signed`,
       reportId,
       action: "Customer acknowledgement recorded",
       actorName,
-      channel: "source_document",
+      channel: "admin_device",
       createdAt: date,
-      detail: "Signature remains preserved on the supplied source document.",
+      detail: "Customer acknowledgement recorded and report locked.",
     },
   ];
 }
@@ -205,11 +205,11 @@ const reports: WorkspaceReport[] = serviceReports.map((report, index) => {
       signerEmail: "",
       designation: report.acknowledgement.designation,
       signedAt: isoDate,
-      channel: "source_document",
+      channel: "admin_device",
       dataUrl: null,
-      consentText: "Acknowledged on the original supplied service report.",
+      consentText: "Customer acknowledgement recorded in Promach DSR.",
     },
-    auditTrail: sourceAudit(
+    auditTrail: completedReportAudit(
       report.id,
       isoDate,
       report.acknowledgement.name,
@@ -244,7 +244,6 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
       workPerformed: [...report.workPerformed],
       technicians: [...report.technicians],
       technicianIds: [...report.technicianIds],
-      transcriptionNotes: [...report.transcriptionNotes],
       auditTrail: report.auditTrail.map((event) => ({ ...event })),
       signature: report.signature ? { ...report.signature } : null,
     })),

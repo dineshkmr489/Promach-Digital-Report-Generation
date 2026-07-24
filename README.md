@@ -47,7 +47,7 @@ npm run dev
 ```
 
 Open `http://localhost:3000` and enter the configured administrator username
-and password. The seed is idempotent: it creates the source-backed initial
+and password. The seed is idempotent: it creates the initial operational
 records only when they do not already exist, so it does not overwrite later
 master-data or report changes.
 

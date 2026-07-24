@@ -654,9 +654,7 @@ async function createReport(
       name: "Awaiting customer signature",
       designation: "",
       signedDate: "",
-      source: "Digital signature pending",
     },
-    transcriptionNotes: [],
     createdAt: now,
     sentAt: null,
     signature: null,
@@ -742,10 +740,6 @@ async function signReport(
       name: signerName,
       designation,
       signedDate: formatDisplayDate(now.slice(0, 10)),
-      source:
-        channel === "client_portal"
-          ? "Signed through secure client link"
-          : "Signed on Promach admin device",
     },
     {
       id: newId("audit"),
