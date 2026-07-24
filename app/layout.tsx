@@ -1,16 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Sans, Manrope } from "next/font/google";
+import { Inter } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 
-const bodyFont = DM_Sans({
+const appFont = Inter({
   variable: "--font-body",
   subsets: ["latin"],
-});
-
-const displayFont = Manrope({
-  variable: "--font-display",
-  subsets: ["latin"],
+  display: "swap",
 });
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -66,9 +62,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${bodyFont.variable} ${displayFont.variable}`}>
-        {children}
-      </body>
+      <body className={appFont.variable}>{children}</body>
     </html>
   );
 }
