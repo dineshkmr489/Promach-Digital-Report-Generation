@@ -18,9 +18,15 @@ export async function generateMetadata(): Promise<Metadata> {
   const host =
     requestHeaders.get("x-forwarded-host") ??
     requestHeaders.get("host") ??
-    "promach-dsr.openai.site";
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
-  const baseUrl = new URL(`${protocol}://${host}`);
+    "localhost:3000";
+  const protocol =
+    requestHeaders.get("x-forwarded-proto") ??
+    (host.startsWith("localhost") || host.startsWith("127.0.0.1")
+      ? "http"
+      : "https");
+  const baseUrl = process.env.APP_URL?.trim()
+    ? new URL(process.env.APP_URL)
+    : new URL(`${protocol}://${host}`);
   const socialImage = new URL("/og-workflow.png", baseUrl).toString();
 
   return {

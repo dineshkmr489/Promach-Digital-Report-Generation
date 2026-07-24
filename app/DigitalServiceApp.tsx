@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   Link2,
   LoaderCircle,
+  LogOut,
   MapPin,
   Menu,
   PencilLine,
@@ -109,6 +110,7 @@ export function DigitalServiceApp({
     useState<WorkspaceReport | null>(null);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
   const [shareState, setShareState] = useState<{
     report: WorkspaceReport;
     url: string;
@@ -142,6 +144,23 @@ export function DigitalServiceApp({
   function toast(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3600);
+  }
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      if (!response.ok) throw new Error("Unable to sign out.");
+      window.location.assign("/login");
+    } catch {
+      setSigningOut(false);
+      toast("Unable to sign out. Please try again.");
+    }
   }
 
   async function generatePdf(report: WorkspaceReport) {
@@ -254,6 +273,20 @@ export function DigitalServiceApp({
             <strong>{adminName}</strong>
             <small>{adminEmail}</small>
           </div>
+          <button
+            aria-label="Sign out"
+            className="admin-sign-out"
+            disabled={signingOut}
+            onClick={() => void signOut()}
+            title="Sign out"
+            type="button"
+          >
+            {signingOut ? (
+              <LoaderCircle className="spin" size={14} />
+            ) : (
+              <LogOut size={14} />
+            )}
+          </button>
         </div>
       </aside>
 

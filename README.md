@@ -30,8 +30,10 @@ Copy `.env.example` to `.env.local` and configure:
 ```dotenv
 MONGODB_URI=mongodb+srv://USER:PASSWORD@HOST/report_gen
 MONGODB_DB=report_gen
+APP_URL=http://localhost:3000
 ADMIN_USERNAME=promach-admin
 ADMIN_PASSWORD=use-a-long-random-password
+AUTH_SECRET=use-at-least-32-random-characters
 ADMIN_NAME=Promach Administrator
 ADMIN_EMAIL=admin@example.com
 ```
@@ -88,11 +90,12 @@ balancer, and restrict inbound security-group ports to SSH plus HTTP/HTTPS.
 
 ## Report signing
 
-The admin workspace is protected by HTTP Basic authentication. A generated
-client signing URL bypasses admin login but contains a random, single-report
-token. Only the token hash is stored in MongoDB. Issuing a replacement link
-invalidates the previous link. A completed report is locked and retains the
-signer identity, timestamp, consent text, signature image, channel, and audit
-trail.
+The admin workspace uses a branded sign-in page and a signed, HTTP-only
+12-hour session cookie. Eight unsuccessful sign-in attempts from one address
+temporarily lock further attempts for 15 minutes. A generated client signing
+URL remains public but contains a random, single-report token. Only the token
+hash is stored in MongoDB. Issuing a replacement link invalidates the previous
+link. A completed report is locked and retains the signer identity, timestamp,
+consent text, signature image, channel, and audit trail.
 
 See `docs/IMPLEMENTATION_PLAN.md` for the broader workflow and data model.

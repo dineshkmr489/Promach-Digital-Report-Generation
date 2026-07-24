@@ -9,7 +9,13 @@ import type {
   TechnicianRecord,
   WorkspaceReport,
 } from "../app/workspaceTypes.ts";
-import { adminIdentity } from "./adminAuth.ts";
+import {
+  adminIdentity,
+  adminSessionCookie,
+  clearAdminSessionCookie,
+  createAdminSessionToken,
+  verifyAdminCredentials,
+} from "./adminAuth.ts";
 import {
   completeReportSignature,
   ensureDatabase,
@@ -38,6 +44,55 @@ const masterEntities = new Set<MasterEntity>([
   "technicians",
   "service-types",
 ]);
+const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
+const LOGIN_ATTEMPT_LIMIT = 8;
+
+type LoginAttempt = {
+  failures: number;
+  resetsAt: number;
+};
+
+declare global {
+  var __promachLoginAttempts: Map<string, LoginAttempt> | undefined;
+}
+
+function loginAttempts(): Map<string, LoginAttempt> {
+  globalThis.__promachLoginAttempts ??= new Map();
+  return globalThis.__promachLoginAttempts;
+}
+
+function loginClientKey(request: Request): string {
+  return (
+    request.headers.get("x-real-ip")?.trim() ||
+    request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ||
+    "local"
+  );
+}
+
+function blockedLogin(key: string): boolean {
+  const attempts = loginAttempts();
+  const current = attempts.get(key);
+  if (!current) return false;
+  if (current.resetsAt <= Date.now()) {
+    attempts.delete(key);
+    return false;
+  }
+  return current.failures >= LOGIN_ATTEMPT_LIMIT;
+}
+
+function recordLoginFailure(key: string): void {
+  const attempts = loginAttempts();
+  const current = attempts.get(key);
+  if (!current || current.resetsAt <= Date.now()) {
+    attempts.set(key, {
+      failures: 1,
+      resetsAt: Date.now() + LOGIN_WINDOW_MS,
+    });
+    return;
+  }
+  current.failures += 1;
+  attempts.set(key, current);
+}
 
 class ApiRequestError extends Error {
   constructor(
@@ -714,8 +769,54 @@ export async function handleApiRequest(request: Request): Promise<Response> {
   }
 
   try {
-    await ensureDatabase();
     const segments = url.pathname.split("/").filter(Boolean);
+
+    if (request.method === "POST" && url.pathname === "/api/auth/login") {
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const clientKey = loginClientKey(request);
+      if (blockedLogin(clientKey)) {
+        return responseJson(
+          {
+            error:
+              "Too many unsuccessful sign-in attempts. Try again in 15 minutes.",
+          },
+          429,
+          { "retry-after": String(LOGIN_WINDOW_MS / 1_000) },
+        );
+      }
+      const payload = await jsonBody<Record<string, unknown>>(request);
+      if (!payload) return apiError("A JSON request body is required.", 415);
+      const username =
+        typeof payload.username === "string" ? payload.username.trim() : "";
+      const password =
+        typeof payload.password === "string" ? payload.password : "";
+      if (!verifyAdminCredentials(username, password)) {
+        recordLoginFailure(clientKey);
+        return apiError("The username or password is incorrect.", 401);
+      }
+      loginAttempts().delete(clientKey);
+      return responseJson(
+        { ok: true },
+        200,
+        {
+          "set-cookie": adminSessionCookie(
+            request,
+            createAdminSessionToken(),
+          ),
+        },
+      );
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      return responseJson(
+        { ok: true },
+        200,
+        { "set-cookie": clearAdminSessionCookie(request) },
+      );
+    }
+
+    await ensureDatabase();
 
     if (
       request.method === "GET" &&

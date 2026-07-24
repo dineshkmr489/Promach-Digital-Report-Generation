@@ -15,16 +15,14 @@ async function availablePort() {
   return port;
 }
 
-async function waitForApplication(url, authorization, server, serverOutput) {
+async function waitForApplication(url, server, serverOutput) {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     if (server.exitCode !== null) {
       throw new Error(`Next.js exited early.\n${serverOutput.join("")}`);
     }
     try {
-      const response = await fetch(url, {
-        headers: { authorization },
-      });
+      const response = await fetch(url);
       if (response.status < 500) return response;
     } catch {
       // The local server is still starting.
@@ -39,9 +37,6 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
   const output = [];
   const testUsername = "test-admin";
   const testPassword = "test-password-not-for-production";
-  const authorization = `Basic ${Buffer.from(
-    `${testUsername}:${testPassword}`,
-  ).toString("base64")}`;
   const server = spawn(
     process.execPath,
     [resolve("scripts/start.mjs")],
@@ -61,18 +56,61 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
   server.stderr.on("data", (chunk) => output.push(chunk.toString()));
   context.after(() => server.kill());
 
-  const response = await waitForApplication(
-    `http://127.0.0.1:${port}/`,
-    authorization,
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const loginPage = await waitForApplication(
+    `${baseUrl}/login`,
     server,
     output,
   );
-  const unauthenticated = await fetch(`http://127.0.0.1:${port}/`);
-  assert.equal(unauthenticated.status, 401);
+  assert.equal(loginPage.status, 200);
+  const loginHtml = await loginPage.text();
+  assert.match(loginHtml, /Welcome back/i);
+  assert.match(loginHtml, /Promach administration/i);
+  assert.doesNotMatch(loginHtml, /www-authenticate/i);
+
+  const unauthenticated = await fetch(`${baseUrl}/`, {
+    redirect: "manual",
+  });
+  assert.match(String(unauthenticated.status), /^30[2378]$/);
   assert.match(
-    unauthenticated.headers.get("www-authenticate") ?? "",
-    /^Basic\b/i,
+    unauthenticated.headers.get("location") ?? "",
+    /\/login(?:\?|$)/,
   );
+
+  const invalidLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      username: testUsername,
+      password: "incorrect-password",
+    }),
+  });
+  assert.equal(invalidLogin.status, 401);
+
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      username: testUsername,
+      password: testPassword,
+    }),
+  });
+  assert.equal(login.status, 200);
+  const setCookie = login.headers.get("set-cookie") ?? "";
+  assert.match(setCookie, /^promach_admin_session=/);
+  assert.match(setCookie, /HttpOnly/i);
+  assert.match(setCookie, /SameSite=Lax/i);
+  const sessionCookie = setCookie.split(";")[0];
+
+  const response = await fetch(`${baseUrl}/`, {
+    headers: { cookie: sessionCookie },
+  });
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
@@ -87,4 +125,16 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
   assert.doesNotMatch(html, /Create one\. Sign anywhere\./i);
   assert.doesNotMatch(html, /Source documents/i);
   assert.doesNotMatch(html, /Retry sync/i);
+
+  const logout = await fetch(`${baseUrl}/api/auth/logout`, {
+    method: "POST",
+    headers: {
+      cookie: sessionCookie,
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: "{}",
+  });
+  assert.equal(logout.status, 200);
+  assert.match(logout.headers.get("set-cookie") ?? "", /Max-Age=0/i);
 });
