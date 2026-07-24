@@ -103,6 +103,25 @@ function optional(value: unknown, max = 1_000): string {
   return normalized;
 }
 
+function activeValue(value: unknown): boolean {
+  return !(
+    value === false ||
+    value === 0 ||
+    value === "0" ||
+    value === "false"
+  );
+}
+
+class ApiRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -313,6 +332,283 @@ async function createMasterRecord(
   }
 
   throw new Error("Unknown master-data section.");
+}
+
+async function updateMasterRecord(
+  db: D1Database,
+  entity: MasterEntity,
+  id: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const recordId = required(id, "Record ID", 200);
+  const active = activeValue(payload.active) ? 1 : 0;
+
+  if (entity === "clients") {
+    const existing = await db
+      .prepare("SELECT id FROM clients WHERE id = ?")
+      .bind(recordId)
+      .first();
+    if (!existing) throw new ApiRequestError("Client not found.", 404);
+    await db
+      .prepare(
+        "UPDATE clients SET name = ?, contact_name = ?, email = ?, phone = ?, address = ?, active = ? WHERE id = ?",
+      )
+      .bind(
+        required(payload.name, "Client name"),
+        optional(payload.contactName, 200),
+        optional(payload.email, 320),
+        optional(payload.phone, 80),
+        required(payload.address, "Client address", 800),
+        active,
+        recordId,
+      )
+      .run();
+    return;
+  }
+
+  if (entity === "locations") {
+    const existing = await db
+      .prepare("SELECT id FROM locations WHERE id = ?")
+      .bind(recordId)
+      .first();
+    if (!existing) throw new ApiRequestError("Site not found.", 404);
+    const clientId = required(payload.clientId, "Client");
+    const client = await db
+      .prepare("SELECT id FROM clients WHERE id = ?")
+      .bind(clientId)
+      .first();
+    if (!client) throw new Error("Select a valid client.");
+    await db
+      .prepare(
+        "UPDATE locations SET client_id = ?, name = ?, address = ?, active = ? WHERE id = ?",
+      )
+      .bind(
+        clientId,
+        required(payload.name, "Location name"),
+        required(payload.address, "Location address", 800),
+        active,
+        recordId,
+      )
+      .run();
+    return;
+  }
+
+  if (entity === "checklist-templates") {
+    const existing = await db
+      .prepare("SELECT id FROM checklist_templates WHERE id = ?")
+      .bind(recordId)
+      .first();
+    if (!existing) {
+      throw new ApiRequestError("Checklist template not found.", 404);
+    }
+    const items = (Array.isArray(payload.items) ? payload.items : [])
+      .map((item) => optional(item, 500))
+      .filter(Boolean)
+      .slice(0, 80);
+    if (!items.length) throw new Error("Add at least one checklist item.");
+    const measurements = (
+      Array.isArray(payload.measurements) ? payload.measurements : []
+    )
+      .map((raw) => {
+        const measurement =
+          raw && typeof raw === "object"
+            ? (raw as Record<string, unknown>)
+            : {};
+        return {
+          label: optional(measurement.label, 200),
+          unit: optional(measurement.unit, 40),
+        };
+      })
+      .filter((measurement) => measurement.label)
+      .slice(0, 30);
+    await db
+      .prepare(
+        "UPDATE checklist_templates SET name = ?, equipment_type = ?, items_json = ?, measurements_json = ?, active = ? WHERE id = ?",
+      )
+      .bind(
+        required(payload.name, "Template name"),
+        required(payload.equipmentType, "Equipment type"),
+        JSON.stringify(items),
+        JSON.stringify(measurements),
+        active,
+        recordId,
+      )
+      .run();
+    return;
+  }
+
+  if (entity === "equipment") {
+    const existing = await db
+      .prepare("SELECT id FROM equipment WHERE id = ?")
+      .bind(recordId)
+      .first();
+    if (!existing) throw new ApiRequestError("Equipment not found.", 404);
+    const clientId = required(payload.clientId, "Client");
+    const locationId = required(payload.locationId, "Location");
+    const checklistTemplateId = required(
+      payload.checklistTemplateId,
+      "Checklist template",
+    );
+    const location = await db
+      .prepare(
+        "SELECT id FROM locations WHERE id = ? AND client_id = ?",
+      )
+      .bind(locationId, clientId)
+      .first();
+    const template = await db
+      .prepare("SELECT id FROM checklist_templates WHERE id = ?")
+      .bind(checklistTemplateId)
+      .first();
+    if (!location) throw new Error("Select a location belonging to this client.");
+    if (!template) throw new Error("Select a valid checklist template.");
+    await db
+      .prepare(
+        "UPDATE equipment SET client_id = ?, location_id = ?, name = ?, type = ?, brand = ?, model = ?, serial = ?, checklist_template_id = ?, active = ? WHERE id = ?",
+      )
+      .bind(
+        clientId,
+        locationId,
+        required(payload.name, "Equipment name"),
+        required(payload.type, "Equipment type"),
+        optional(payload.brand, 200) || "Not recorded",
+        optional(payload.model, 200) || "Not recorded",
+        optional(payload.serial, 200) || "Not recorded",
+        checklistTemplateId,
+        active,
+        recordId,
+      )
+      .run();
+    return;
+  }
+
+  if (entity === "technicians") {
+    const existing = await db
+      .prepare("SELECT id FROM technicians WHERE id = ?")
+      .bind(recordId)
+      .first();
+    if (!existing) throw new ApiRequestError("Technician not found.", 404);
+    await db
+      .prepare(
+        "UPDATE technicians SET name = ?, designation = ?, email = ?, phone = ?, active = ? WHERE id = ?",
+      )
+      .bind(
+        required(payload.name, "Technician name"),
+        optional(payload.designation, 200) || "Service Technician",
+        optional(payload.email, 320),
+        optional(payload.phone, 80),
+        active,
+        recordId,
+      )
+      .run();
+    return;
+  }
+
+  throw new ApiRequestError("Unknown master-data section.", 404);
+}
+
+async function referenceCount(
+  db: D1Database,
+  sql: string,
+  value: string,
+): Promise<number> {
+  const result = await db
+    .prepare(sql)
+    .bind(value)
+    .first<{ count: number }>();
+  return Number(result?.count ?? 0);
+}
+
+async function deleteMasterRecord(
+  db: D1Database,
+  entity: MasterEntity,
+  id: string,
+): Promise<void> {
+  const recordId = required(id, "Record ID", 200);
+
+  if (entity === "clients") {
+    const [locations, equipmentItems, reports] = await Promise.all([
+      referenceCount(
+        db,
+        "SELECT COUNT(*) AS count FROM locations WHERE client_id = ?",
+        recordId,
+      ),
+      referenceCount(
+        db,
+        "SELECT COUNT(*) AS count FROM equipment WHERE client_id = ?",
+        recordId,
+      ),
+      referenceCount(
+        db,
+        "SELECT COUNT(*) AS count FROM service_reports WHERE client_id = ?",
+        recordId,
+      ),
+    ]);
+    if (locations || equipmentItems || reports) {
+      throw new ApiRequestError(
+        `This client cannot be deleted because it is linked to ${locations} site(s), ${equipmentItems} equipment record(s), and ${reports} service report(s). Remove dependent master records first; historical reports must remain protected.`,
+        409,
+      );
+    }
+    await db.prepare("DELETE FROM clients WHERE id = ?").bind(recordId).run();
+    return;
+  }
+
+  if (entity === "locations") {
+    const [equipmentItems, reports] = await Promise.all([
+      referenceCount(
+        db,
+        "SELECT COUNT(*) AS count FROM equipment WHERE location_id = ?",
+        recordId,
+      ),
+      referenceCount(
+        db,
+        "SELECT COUNT(*) AS count FROM service_reports WHERE location_id = ?",
+        recordId,
+      ),
+    ]);
+    if (equipmentItems || reports) {
+      throw new ApiRequestError(
+        `This site cannot be deleted because it is linked to ${equipmentItems} equipment record(s) and ${reports} service report(s). Delete or move its equipment first; historical reports must remain protected.`,
+        409,
+      );
+    }
+    await db.prepare("DELETE FROM locations WHERE id = ?").bind(recordId).run();
+    return;
+  }
+
+  if (entity === "checklist-templates") {
+    const equipmentItems = await referenceCount(
+      db,
+      "SELECT COUNT(*) AS count FROM equipment WHERE checklist_template_id = ?",
+      recordId,
+    );
+    if (equipmentItems) {
+      throw new ApiRequestError(
+        `This checklist cannot be deleted because ${equipmentItems} equipment record(s) use it. Assign those records to another checklist first.`,
+        409,
+      );
+    }
+    await db
+      .prepare("DELETE FROM checklist_templates WHERE id = ?")
+      .bind(recordId)
+      .run();
+    return;
+  }
+
+  if (entity === "equipment") {
+    await db.prepare("DELETE FROM equipment WHERE id = ?").bind(recordId).run();
+    return;
+  }
+
+  if (entity === "technicians") {
+    await db
+      .prepare("DELETE FROM technicians WHERE id = ?")
+      .bind(recordId)
+      .run();
+    return;
+  }
+
+  throw new ApiRequestError("Unknown master-data section.", 404);
 }
 
 async function createReport(
@@ -681,6 +977,32 @@ export async function handleApiRequest(
       return responseJson(await readWorkspace(db), 201);
     }
 
+    if (
+      request.method === "PUT" &&
+      segments[1] === "master" &&
+      segments.length === 4
+    ) {
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const entity = segments[2] as MasterEntity;
+      const recordId = decodeURIComponent(segments[3]);
+      const payload = await jsonBody<Record<string, unknown>>(request);
+      if (!payload) return apiError("A JSON request body is required.", 415);
+      await updateMasterRecord(db, entity, recordId, payload);
+      return responseJson(await readWorkspace(db));
+    }
+
+    if (
+      request.method === "DELETE" &&
+      segments[1] === "master" &&
+      segments.length === 4
+    ) {
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const entity = segments[2] as MasterEntity;
+      const recordId = decodeURIComponent(segments[3]);
+      await deleteMasterRecord(db, entity, recordId);
+      return responseJson(await readWorkspace(db));
+    }
+
     if (request.method === "POST" && url.pathname === "/api/reports") {
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<CreateReportPayload>(request);
@@ -722,6 +1044,9 @@ export async function handleApiRequest(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unexpected server error.";
-    return apiError(message, 400);
+    return apiError(
+      message,
+      error instanceof ApiRequestError ? error.status : 400,
+    );
   }
 }

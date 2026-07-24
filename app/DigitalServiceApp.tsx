@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   Signature,
   Sparkles,
+  Trash2,
   UserRound,
   UsersRound,
   Wrench,
@@ -42,8 +43,13 @@ import { downloadServiceReportPdf } from "./reportPdf";
 import { SignaturePad } from "./SignaturePad";
 import { createInitialWorkspace } from "./workspaceSeed";
 import type {
+  ChecklistTemplateRecord,
+  ClientRecord,
   CreateReportPayload,
+  EquipmentRecord,
+  LocationRecord,
   MasterEntity,
+  TechnicianRecord,
   WorkspaceReport,
   WorkspaceSnapshot,
 } from "./workspaceTypes";
@@ -55,6 +61,12 @@ type MasterTab =
   | "equipment"
   | "checklist-templates"
   | "technicians";
+type MasterRecord =
+  | ClientRecord
+  | LocationRecord
+  | EquipmentRecord
+  | ChecklistTemplateRecord
+  | TechnicianRecord;
 
 const navItems = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
@@ -1215,6 +1227,19 @@ function MasterData({
 }) {
   const [tab, setTab] = useState<MasterTab>("clients");
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<MasterRecord | null>(null);
+  const [deleting, setDeleting] = useState<MasterRecord | null>(null);
+
+  function saved(
+    nextWorkspace: WorkspaceSnapshot,
+    action: "created" | "updated",
+  ) {
+    onWorkspaceChange(nextWorkspace);
+    setAdding(false);
+    setEditing(null);
+    onNotice(`Master data ${action}.`);
+  }
+
   return (
     <>
       <PageHeading
@@ -1243,7 +1268,12 @@ function MasterData({
           })}
         </nav>
         <section className="real-panel master-content">
-          <MasterList tab={tab} workspace={workspace} />
+          <MasterList
+            tab={tab}
+            workspace={workspace}
+            onEdit={setEditing}
+            onDelete={setDeleting}
+          />
         </section>
       </div>
       {adding && (
@@ -1251,10 +1281,27 @@ function MasterData({
           entity={tab}
           workspace={workspace}
           onClose={() => setAdding(false)}
-          onSaved={(nextWorkspace) => {
+          onSaved={(nextWorkspace) => saved(nextWorkspace, "created")}
+        />
+      )}
+      {editing && (
+        <MasterDataDialog
+          entity={tab}
+          record={editing}
+          workspace={workspace}
+          onClose={() => setEditing(null)}
+          onSaved={(nextWorkspace) => saved(nextWorkspace, "updated")}
+        />
+      )}
+      {deleting && (
+        <DeleteMasterDialog
+          entity={tab}
+          record={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(nextWorkspace) => {
             onWorkspaceChange(nextWorkspace);
-            setAdding(false);
-            onNotice("Master data saved.");
+            setDeleting(null);
+            onNotice("Master record deleted.");
           }}
         />
       )}
@@ -1265,9 +1312,13 @@ function MasterData({
 function MasterList({
   tab,
   workspace,
+  onEdit,
+  onDelete,
 }: {
   tab: MasterTab;
   workspace: WorkspaceSnapshot;
+  onEdit: (record: MasterRecord) => void;
+  onDelete: (record: MasterRecord) => void;
 }) {
   const clientName = (clientId: string) =>
     workspace.clients.find((client) => client.id === clientId)?.name ?? "Unknown client";
@@ -1276,45 +1327,107 @@ function MasterList({
 
   if (tab === "clients") {
     return <div className="master-card-grid">{workspace.clients.map((item) => (
-      <article key={item.id}><span className="master-icon"><Building2 size={19} /></span><StatusPill /><h2>{item.name}</h2><p>{item.contactName || "No contact recorded"}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div><div><dt>Address</dt><dd>{item.address}</dd></div></dl></article>
+      <article key={item.id}><span className="master-icon"><Building2 size={19} /></span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.contactName || "No contact recorded"}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div><div><dt>Address</dt><dd>{item.address}</dd></div></dl><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
     ))}</div>;
   }
   if (tab === "locations") {
     return <div className="master-card-grid">{workspace.locations.map((item) => (
-      <article key={item.id}><span className="master-icon"><MapPin size={19} /></span><StatusPill /><span className="record-owner">{clientName(item.clientId)}</span><h2>{item.name}</h2><p>{item.address}</p><div className="record-meta">{workspace.equipment.filter((equipment) => equipment.locationId === item.id).length} equipment records</div></article>
+      <article key={item.id}><span className="master-icon"><MapPin size={19} /></span><StatusPill active={item.active} /><span className="record-owner">{clientName(item.clientId)}</span><h2>{item.name}</h2><p>{item.address}</p><div className="record-meta">{workspace.equipment.filter((equipment) => equipment.locationId === item.id).length} equipment records</div><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
     ))}</div>;
   }
   if (tab === "equipment") {
-    return <div className="master-table"><div className="master-table-head"><span>Equipment</span><span>Client / site</span><span>Identification</span><span>Checklist</span></div>{workspace.equipment.map((item) => (
-      <article key={item.id}><span><i><Gauge size={16} /></i><b>{item.name}</b><small>{item.type}</small></span><span><b>{clientName(item.clientId)}</b><small>{locationName(item.locationId)}</small></span><span><b>{item.brand} {item.model}</b><small>Serial: {item.serial}</small></span><span><b>{workspace.checklistTemplates.find((template) => template.id === item.checklistTemplateId)?.name ?? "No template"}</b><small>Loaded into new reports</small></span></article>
+    return <div className="master-table"><div className="master-table-head"><span>Equipment</span><span>Client / site</span><span>Identification</span><span>Checklist</span><span>Actions</span></div>{workspace.equipment.map((item) => (
+      <article key={item.id}><span><i><Gauge size={16} /></i><b>{item.name}</b><small>{item.type} · {item.active ? "Active" : "Inactive"}</small></span><span><b>{clientName(item.clientId)}</b><small>{locationName(item.locationId)}</small></span><span><b>{item.brand} {item.model}</b><small>Serial: {item.serial}</small></span><span><b>{workspace.checklistTemplates.find((template) => template.id === item.checklistTemplateId)?.name ?? "No template"}</b><small>Loaded into new reports</small></span><MasterRecordActions compact name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
     ))}</div>;
   }
   if (tab === "checklist-templates") {
     return <div className="checklist-master-grid">{workspace.checklistTemplates.map((item) => (
-      <article key={item.id}><header><span><ClipboardCheck size={18} /></span><div><strong>{item.name}</strong><small>{item.equipmentType}</small></div><i>{item.items.length} checks · {item.measurements.length} readings</i></header><ol>{item.items.slice(0, 4).map((check) => <li key={check}>{check}</li>)}</ol>{item.items.length > 4 && <p>+ {item.items.length - 4} more checklist items</p>}</article>
+      <article key={item.id}><header><span><ClipboardCheck size={18} /></span><div><strong>{item.name}</strong><small>{item.equipmentType} · {item.active ? "Active" : "Inactive"}</small></div><i>{item.items.length} checks · {item.measurements.length} readings</i></header><ol>{item.items.slice(0, 4).map((check) => <li key={check}>{check}</li>)}</ol>{item.items.length > 4 && <p>+ {item.items.length - 4} more checklist items</p>}<MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
     ))}</div>;
   }
   return <div className="master-card-grid technicians">{workspace.technicians.map((item) => (
-    <article key={item.id}><span className="master-avatar">{item.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><StatusPill /><h2>{item.name}</h2><p>{item.designation}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div></dl></article>
+    <article key={item.id}><span className="master-avatar">{item.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.designation}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div></dl><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
   ))}</div>;
 }
 
-function StatusPill() {
-  return <span className="master-active"><span /> Active</span>;
+function StatusPill({ active }: { active: boolean }) {
+  return <span className={`master-active ${active ? "" : "inactive"}`}><span /> {active ? "Active" : "Inactive"}</span>;
+}
+
+function MasterRecordActions({
+  name,
+  onEdit,
+  onDelete,
+  compact = false,
+}: {
+  name: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`master-record-actions ${compact ? "compact" : ""}`}>
+      <button aria-label={`Edit ${name}`} onClick={onEdit} type="button"><PencilLine size={14} /> Edit</button>
+      <button aria-label={`Delete ${name}`} className="danger" onClick={onDelete} type="button"><Trash2 size={14} /> Delete</button>
+    </div>
+  );
 }
 
 function MasterDataDialog({
   entity,
+  record,
   workspace,
   onClose,
   onSaved,
 }: {
   entity: MasterEntity;
+  record?: MasterRecord;
   workspace: WorkspaceSnapshot;
   onClose: () => void;
   onSaved: (workspace: WorkspaceSnapshot) => void;
 }) {
-  const [form, setForm] = useState<Record<string, string>>({});
+  const [form, setForm] = useState<Record<string, string>>(() => {
+    if (!record) {
+      return entity === "technicians"
+        ? { designation: "Service Technician" }
+        : {};
+    }
+    const initial: Record<string, string> = {
+      name: record.name,
+      active: String(record.active),
+    };
+    if ("clientId" in record) initial.clientId = record.clientId;
+    if ("locationId" in record) initial.locationId = record.locationId;
+    if ("contactName" in record) {
+      initial.contactName = record.contactName;
+      initial.email = record.email;
+      initial.phone = record.phone;
+      initial.address = record.address;
+    }
+    if ("address" in record && !("contactName" in record)) {
+      initial.address = record.address;
+    }
+    if ("checklistTemplateId" in record) {
+      initial.type = record.type;
+      initial.brand = record.brand;
+      initial.model = record.model;
+      initial.serial = record.serial;
+      initial.checklistTemplateId = record.checklistTemplateId;
+    }
+    if ("items" in record) {
+      initial.equipmentType = record.equipmentType;
+      initial.items = record.items.join("\n");
+      initial.measurements = record.measurements
+        .map((item) => `${item.label}${item.unit ? ` | ${item.unit}` : ""}`)
+        .join("\n");
+    }
+    if ("designation" in record) {
+      initial.designation = record.designation;
+      initial.email = record.email;
+      initial.phone = record.phone;
+    }
+    return initial;
+  });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const singular =
@@ -1333,10 +1446,14 @@ function MasterDataDialog({
     setSaving(true);
     setError("");
     try {
+      const commonPayload = {
+        ...form,
+        active: form.active !== "false",
+      };
       const payload =
         entity === "checklist-templates"
           ? {
-              ...form,
+              ...commonPayload,
               items: (form.items ?? "")
                 .split("\n")
                 .map((item) => item.trim())
@@ -1349,12 +1466,17 @@ function MasterDataDialog({
                 })
                 .filter((item) => item.label),
             }
-          : form;
-      const response = await fetch(`/api/master/${entity}`, {
-        method: "POST",
+          : commonPayload;
+      const response = await fetch(
+        record
+          ? `/api/master/${entity}/${encodeURIComponent(record.id)}`
+          : `/api/master/${entity}`,
+        {
+        method: record ? "PUT" : "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
-      });
+        },
+      );
       const result = (await response.json()) as
         | WorkspaceSnapshot
         | { error: string };
@@ -1377,13 +1499,16 @@ function MasterDataDialog({
     <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="master-dialog-title">
       <button className="modal-scrim" aria-label="Close" onClick={onClose} type="button" />
       <form className="form-dialog" onSubmit={save}>
-        <header><div><span>Master data</span><h2 id="master-dialog-title">Add {singular}</h2></div><button aria-label="Close" onClick={onClose} type="button"><X size={19} /></button></header>
+        <header><div><span>Master data</span><h2 id="master-dialog-title">{record ? "Edit" : "Add"} {singular}</h2></div><button aria-label="Close" onClick={onClose} type="button"><X size={19} /></button></header>
         <div className="dialog-body form-grid">
+          {record && (
+            <label>Record status<select value={form.active ?? "true"} onChange={(event) => field("active", event.target.value)}><option value="true">Active</option><option value="false">Inactive</option></select></label>
+          )}
           {(entity === "locations" || entity === "equipment") && (
-            <label>Client<select required value={form.clientId ?? ""} onChange={(event) => { field("clientId", event.target.value); field("locationId", ""); }}><option value="">Select client</option>{workspace.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>Client<select required value={form.clientId ?? ""} onChange={(event) => { field("clientId", event.target.value); field("locationId", ""); }}><option value="">Select client</option>{workspace.clients.map((item) => <option key={item.id} value={item.id}>{item.name}{item.active ? "" : " (Inactive)"}</option>)}</select></label>
           )}
           {entity === "equipment" && (
-            <label>Service site<select required value={form.locationId ?? ""} onChange={(event) => field("locationId", event.target.value)}><option value="">Select site</option>{selectedClientLocations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>Service site<select required value={form.locationId ?? ""} onChange={(event) => field("locationId", event.target.value)}><option value="">Select site</option>{selectedClientLocations.map((item) => <option key={item.id} value={item.id}>{item.name}{item.active ? "" : " (Inactive)"}</option>)}</select></label>
           )}
           <label>{entity === "clients" ? "Client name" : entity === "locations" ? "Site name" : entity === "equipment" ? "Equipment name / tag" : entity === "checklist-templates" ? "Template name" : "Technician name"}<input required value={form.name ?? ""} onChange={(event) => field("name", event.target.value)} /></label>
           {entity === "clients" && <>
@@ -1395,7 +1520,7 @@ function MasterDataDialog({
           {entity === "equipment" && <>
             <label>Equipment type<input required value={form.type ?? ""} onChange={(event) => field("type", event.target.value)} placeholder="e.g. Air Handling Unit" /></label>
             <div className="form-grid three"><label>Brand<input value={form.brand ?? ""} onChange={(event) => field("brand", event.target.value)} /></label><label>Model<input value={form.model ?? ""} onChange={(event) => field("model", event.target.value)} /></label><label>Serial number<input value={form.serial ?? ""} onChange={(event) => field("serial", event.target.value)} /></label></div>
-            <label>Checklist template<select required value={form.checklistTemplateId ?? ""} onChange={(event) => field("checklistTemplateId", event.target.value)}><option value="">Select checklist</option>{workspace.checklistTemplates.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.equipmentType}</option>)}</select></label>
+            <label>Checklist template<select required value={form.checklistTemplateId ?? ""} onChange={(event) => field("checklistTemplateId", event.target.value)}><option value="">Select checklist</option>{workspace.checklistTemplates.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.equipmentType}{item.active ? "" : " (Inactive)"}</option>)}</select></label>
           </>}
           {entity === "checklist-templates" && <>
             <label>Equipment type<input required value={form.equipmentType ?? ""} onChange={(event) => field("equipmentType", event.target.value)} placeholder="e.g. Air Curtain" /></label>
@@ -1408,8 +1533,66 @@ function MasterDataDialog({
           </>}
           {error && <p className="form-error">{error}</p>}
         </div>
-        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{saving ? "Saving…" : `Save ${singular}`}</button></footer>
+        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{saving ? "Saving…" : record ? `Update ${singular}` : `Save ${singular}`}</button></footer>
       </form>
+    </div>
+  );
+}
+
+function DeleteMasterDialog({
+  entity,
+  record,
+  onClose,
+  onDeleted,
+}: {
+  entity: MasterEntity;
+  record: MasterRecord;
+  onClose: () => void;
+  onDeleted: (workspace: WorkspaceSnapshot) => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function remove() {
+    setDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/master/${entity}/${encodeURIComponent(record.id)}`,
+        { method: "DELETE" },
+      );
+      const result = (await response.json()) as
+        | WorkspaceSnapshot
+        | { error: string };
+      if (!response.ok || "error" in result) {
+        throw new Error(
+          "error" in result ? result.error : "Unable to delete record",
+        );
+      }
+      onDeleted(result);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to delete record",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="delete-master-title">
+      <button className="modal-scrim" aria-label="Close" onClick={onClose} type="button" />
+      <section className="delete-master-dialog">
+        <span className="delete-master-icon"><AlertTriangle size={23} /></span>
+        <span>Delete master record</span>
+        <h2 id="delete-master-title">Delete “{record.name}”?</h2>
+        <p>This permanently removes the record from master data. If it is linked to equipment or a historical report, deletion will be blocked so signed records remain intact.</p>
+        {error && <p className="form-error">{error}</p>}
+        <footer>
+          <button className="real-secondary-button" onClick={onClose} type="button">Cancel</button>
+          <button className="danger-button" disabled={deleting} onClick={() => void remove()} type="button">{deleting ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}{deleting ? "Deleting…" : "Delete record"}</button>
+        </footer>
+      </section>
     </div>
   );
 }
