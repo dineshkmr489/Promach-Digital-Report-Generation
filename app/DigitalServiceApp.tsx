@@ -103,6 +103,7 @@ export function DigitalServiceApp({
 }) {
   const [view, setView] = useState<View>("overview");
   const [masterTab, setMasterTab] = useState<MasterTab>("clients");
+  const [masterNavigationOpen, setMasterNavigationOpen] = useState(false);
   const [workspace, setWorkspace] =
     useState<WorkspaceSnapshot>(initialWorkspace);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -139,6 +140,19 @@ export function DigitalServiceApp({
   function navigate(nextView: View) {
     setView(nextView);
     setMenuOpen(false);
+  }
+
+  function navigateFromSidebar(nextView: View) {
+    if (nextView === "master") {
+      if (view === "master") {
+        setMasterNavigationOpen((open) => !open);
+        return;
+      }
+      setMasterNavigationOpen(true);
+    } else {
+      setMasterNavigationOpen(false);
+    }
+    navigate(nextView);
   }
 
   function toast(message: string) {
@@ -228,17 +242,38 @@ export function DigitalServiceApp({
             return (
               <div className="sidebar-nav-group" key={item.id}>
                 <button
+                  aria-controls={
+                    item.id === "master"
+                      ? "sidebar-master-navigation"
+                      : undefined
+                  }
+                  aria-expanded={
+                    item.id === "master"
+                      ? masterNavigationOpen
+                      : undefined
+                  }
                   className={view === item.id ? "active" : ""}
-                  onClick={() => navigate(item.id)}
+                  onClick={() => navigateFromSidebar(item.id)}
                   type="button"
                 >
                   <Icon size={19} />
                   <span>{item.label}</span>
                   {item.id === "reports" && <i>{workspace.reports.length}</i>}
                   {item.id === "create" && <Plus size={14} />}
+                  {item.id === "master" && (
+                    <ChevronRight
+                      className={`sidebar-disclosure ${
+                        masterNavigationOpen ? "open" : ""
+                      }`}
+                      size={15}
+                    />
+                  )}
                 </button>
-                {item.id === "master" && (
-                  <div className="sidebar-master-links">
+                {item.id === "master" && masterNavigationOpen && (
+                  <div
+                    className="sidebar-master-links"
+                    id="sidebar-master-navigation"
+                  >
                     {masterTabs.map((master) => {
                       const MasterIcon = master.icon;
                       return (
@@ -251,6 +286,7 @@ export function DigitalServiceApp({
                           key={master.id}
                           onClick={() => {
                             setMasterTab(master.id);
+                            setMasterNavigationOpen(true);
                             navigate("master");
                           }}
                           type="button"
