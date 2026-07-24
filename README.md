@@ -1,66 +1,98 @@
 # Promach Digital Service Reports
 
-A responsive operational application for maintaining Promach master data,
-creating equipment service reports, securely sharing one report with a client,
-collecting a digital signature, and generating the locked signed PDF.
+Promach Digital Service Reports is a self-hosted Next.js application for
+maintaining master data, creating equipment service reports, securely sharing a
+single report with a client, collecting a digital signature, and downloading
+the completed signed PDF.
 
-## Implemented workflow
+All operational data is persisted in MongoDB:
 
-- Durable master data for clients, sites, equipment, checklist templates,
-  measurement definitions, and technicians
-- Guided report creation from reusable master records
-- Per-equipment Yes / No / N/A checklist results, remarks, readings, and notes
-- Draft, awaiting-signature, and locked-completed report states
-- Cryptographically random one-report client signing links
-- Client review and signature from a phone, tablet, or desktop
-- Client signature capture directly on a Promach admin device
-- Signature channel, signer identity, timestamp, consent, and report audit trail
-- Signed PDF generation with signature image and signing metadata
-- Original Changi General Hospital report 4122 and Tuas Power report 3930
-  preserved as source-backed completed records
+- company profile
+- clients and sites
+- equipment
+- checklist templates and measurement definitions
+- technicians
+- service types
+- service reports, secure-link state, signatures, and audit trails
 
-The admin application requires authenticated access. Client links expose only
-the assigned report and remain usable after signing so the client can download
-the completed copy. Issuing a replacement link invalidates the previous link.
+The application no longer contains Cloudflare Workers, D1, Vinext, or OpenAI
+Sites deployment configuration.
 
-## Implementation plan
+## Local setup
 
-See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for the detailed
-phase plan, architecture, data model, acceptance criteria, security controls,
-testing strategy, and production rollout.
+Requirements:
 
-## Local development
+- Node.js 22.13 or newer
+- access to a MongoDB deployment
 
-Requires Node.js 22.13 or newer.
+Copy `.env.example` to `.env.local` and configure:
+
+```dotenv
+MONGODB_URI=mongodb+srv://USER:PASSWORD@HOST/report_gen
+MONGODB_DB=report_gen
+ADMIN_USERNAME=promach-admin
+ADMIN_PASSWORD=use-a-long-random-password
+ADMIN_NAME=Promach Administrator
+ADMIN_EMAIL=admin@example.com
+```
+
+Then install, initialize the database, and start the application:
 
 ```bash
 npm install
+npm run seed
 npm run dev
 ```
 
-Create a production build:
+Open `http://localhost:3000` and enter the configured administrator username
+and password. The seed is idempotent: it creates the source-backed initial
+records only when they do not already exist, so it does not overwrite later
+master-data or report changes.
 
-```bash
-npm run build
-```
-
-Run verification:
+## Verification
 
 ```bash
 npx tsc --noEmit
 npm run lint
-node --test tests/rendered-html.test.mjs
+npm test
 ```
 
-Regenerate the two checked PDF samples from the verified records:
+Regenerate the checked sample PDFs:
 
 ```bash
 npm run generate:pdfs
 ```
 
-## Technology
+## EC2 build
 
-- Next.js / React / TypeScript
-- Tailwind CSS build pipeline with project CSS design tokens
-- Vinext and Cloudflare Workers-compatible output
-- Lucide interface icons
+Build a self-contained Next.js server:
+
+```bash
+npm ci
+npm run build:ec2
+```
+
+The deployable application is written to `.next/standalone`. Copy that
+directory to `/opt/promach-dsr` on EC2. Create `/etc/promach-dsr.env` using the
+same variables as `.env.example`; never copy `.env.local` into source control or
+an AMI.
+
+Example systemd and nginx files are provided in:
+
+- `deploy/promach-dsr.service.example`
+- `deploy/nginx-promach.conf.example`
+
+Before exposing the server, replace the example administrator password, allow
+the EC2 egress IP in MongoDB Atlas, terminate HTTPS at nginx or an AWS load
+balancer, and restrict inbound security-group ports to SSH plus HTTP/HTTPS.
+
+## Report signing
+
+The admin workspace is protected by HTTP Basic authentication. A generated
+client signing URL bypasses admin login but contains a random, single-report
+token. Only the token hash is stored in MongoDB. Issuing a replacement link
+invalidates the previous link. A completed report is locked and retains the
+signer identity, timestamp, consent text, signature image, channel, and audit
+trail.
+
+See `docs/IMPLEMENTATION_PLAN.md` for the broader workflow and data model.

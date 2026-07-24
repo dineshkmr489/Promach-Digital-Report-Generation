@@ -1,5 +1,6 @@
 import type {
   ChecklistResult,
+  CompanyProfile,
   EquipmentService,
   Measurement,
   ServiceReport,
@@ -113,6 +114,7 @@ export type WorkspaceReport = Omit<ServiceReport, "status"> & {
 };
 
 export type WorkspaceSnapshot = {
+  company: CompanyProfile;
   clients: ClientRecord[];
   locations: LocationRecord[];
   equipment: EquipmentRecord[];
@@ -140,7 +142,7 @@ export type CreateReportPayload = {
 
 export type ClientReportResponse = {
   report: WorkspaceReport;
-  companyName: string;
+  company: CompanyProfile;
 };
 
 export type ReportEquipmentSnapshot = EquipmentService;

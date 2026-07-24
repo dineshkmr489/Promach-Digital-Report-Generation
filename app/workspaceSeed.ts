@@ -1,4 +1,4 @@
-import { serviceReports } from "./reportData";
+import { company, serviceReports } from "./reportData.ts";
 import type {
   AuditEvent,
   ChecklistTemplateRecord,
@@ -9,7 +9,7 @@ import type {
   TechnicianRecord,
   WorkspaceReport,
   WorkspaceSnapshot,
-} from "./workspaceTypes";
+} from "./workspaceTypes.ts";
 
 const clients: ClientRecord[] = [
   {
@@ -219,6 +219,7 @@ const reports: WorkspaceReport[] = serviceReports.map((report, index) => {
 
 export function createInitialWorkspace(): WorkspaceSnapshot {
   return {
+    company: { ...company },
     clients: clients.map((item) => ({ ...item })),
     locations: locations.map((item) => ({ ...item })),
     equipment: equipment.map((item) => ({ ...item })),

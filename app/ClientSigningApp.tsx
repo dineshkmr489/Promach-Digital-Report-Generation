@@ -12,6 +12,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { CompanyProfile } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
 import { SignaturePad } from "./SignaturePad";
 import type {
@@ -21,6 +22,7 @@ import type {
 
 export function ClientSigningApp({ token }: { token: string }) {
   const [report, setReport] = useState<WorkspaceReport | null>(null);
+  const [company, setCompany] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [signerName, setSignerName] = useState("");
@@ -44,6 +46,7 @@ export function ClientSigningApp({ token }: { token: string }) {
         }
         if (!cancelled && "report" in payload) {
           setReport(payload.report);
+          setCompany(payload.company);
           setSignerName(payload.report.signature?.signerName ?? "");
           setSignerEmail(payload.report.signature?.signerEmail ?? "");
           setDesignation(payload.report.signature?.designation ?? "");
@@ -154,7 +157,10 @@ export function ClientSigningApp({ token }: { token: string }) {
             </div>
             <button
               className="real-primary-button"
-              onClick={() => void downloadServiceReportPdf(report)}
+              disabled={!company}
+              onClick={() => {
+                if (company) void downloadServiceReportPdf(report, company);
+              }}
               type="button"
             >
               <Download size={17} />

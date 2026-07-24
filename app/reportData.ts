@@ -69,7 +69,16 @@ export type ServiceReport = {
   } | null;
 };
 
-export const company = {
+export type CompanyProfile = {
+  name: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  registration: string;
+};
+
+export const company: CompanyProfile = {
   name: "PROMACH PTE. LTD.",
   address:
     "8 Temasek Boulevard Level 42, Suntec Tower Three, Singapore-038988",

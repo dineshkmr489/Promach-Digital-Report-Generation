@@ -35,11 +35,10 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { company } from "./reportData";
+import { useMemo, useState } from "react";
+import type { CompanyProfile } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
 import { SignaturePad } from "./SignaturePad";
-import { createInitialWorkspace } from "./workspaceSeed";
 import type {
   ChecklistTemplateRecord,
   ClientRecord,
@@ -95,31 +94,27 @@ function masterSingular(entity: MasterEntity): string {
 export function DigitalServiceApp({
   adminName,
   adminEmail,
+  initialWorkspace,
 }: {
   adminName: string;
   adminEmail: string;
+  initialWorkspace: WorkspaceSnapshot;
 }) {
   const [view, setView] = useState<View>("overview");
   const [masterTab, setMasterTab] = useState<MasterTab>("clients");
-  const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(
-    createInitialWorkspace,
-  );
+  const [workspace, setWorkspace] =
+    useState<WorkspaceSnapshot>(initialWorkspace);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedReport, setSelectedReport] =
     useState<WorkspaceReport | null>(null);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
-  const [syncError, setSyncError] = useState("");
   const [shareState, setShareState] = useState<{
     report: WorkspaceReport;
     url: string;
   } | null>(null);
   const [signingReport, setSigningReport] =
     useState<WorkspaceReport | null>(null);
-
-  useEffect(() => {
-    refreshWorkspace();
-  }, []);
 
   const filteredReports = useMemo(() => {
     const normalized = query.toLowerCase().trim();
@@ -139,30 +134,6 @@ export function DigitalServiceApp({
     );
   }, [query, workspace.reports]);
 
-  async function refreshWorkspace() {
-    try {
-      const response = await fetch("/api/workspace", {
-        headers: { accept: "application/json" },
-      });
-      const payload = (await response.json()) as
-        | WorkspaceSnapshot
-        | { error: string };
-      if (!response.ok || "error" in payload) {
-        throw new Error(
-          "error" in payload ? payload.error : "Unable to load workspace",
-        );
-      }
-      setWorkspace(payload);
-      setSyncError("");
-    } catch (error) {
-      setSyncError(
-        error instanceof Error
-          ? error.message
-          : "The live workspace could not be loaded.",
-      );
-    }
-  }
-
   function navigate(nextView: View) {
     setView(nextView);
     setMenuOpen(false);
@@ -175,7 +146,7 @@ export function DigitalServiceApp({
 
   async function generatePdf(report: WorkspaceReport) {
     try {
-      await downloadServiceReportPdf(report);
+      await downloadServiceReportPdf(report, workspace.company);
       toast(`Report ${report.id} PDF generated.`);
     } catch {
       toast(`Report ${report.id} PDF could not be generated.`);
@@ -283,7 +254,6 @@ export function DigitalServiceApp({
             <strong>{adminName}</strong>
             <small>{adminEmail}</small>
           </div>
-          <a href="/signout-with-chatgpt?return_to=/">Sign out</a>
         </div>
       </aside>
 
@@ -318,16 +288,10 @@ export function DigitalServiceApp({
             </label>
           </div>
           <div className="topbar-actions">
-            {syncError ? (
-              <button className="sync-warning" onClick={refreshWorkspace} type="button">
-                <AlertTriangle size={14} /> Retry sync
-              </button>
-            ) : (
-              <div className="dataset-pill">
-                <span />
-                {awaiting} awaiting signature
-              </div>
-            )}
+            <div className="dataset-pill">
+              <span />
+              {awaiting} awaiting signature
+            </div>
             <button
               className="quick-create"
               onClick={() => navigate("create")}
@@ -398,6 +362,7 @@ export function DigitalServiceApp({
 
       {selectedReport && (
         <ReportDetail
+          company={workspace.company}
           report={selectedReport}
           onClose={() => setSelectedReport(null)}
           onGenerate={generatePdf}
@@ -1626,12 +1591,14 @@ function DeleteMasterDialog({
 }
 
 function ReportDetail({
+  company,
   report,
   onClose,
   onGenerate,
   onSend,
   onSignHere,
 }: {
+  company: CompanyProfile;
   report: WorkspaceReport;
   onClose: () => void;
   onGenerate: (report: WorkspaceReport) => void;

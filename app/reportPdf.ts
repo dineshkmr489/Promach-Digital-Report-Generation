@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import {
-  company,
+  type CompanyProfile,
   type EquipmentService,
   type ServiceReport,
 } from "./reportData.ts";
@@ -103,6 +103,7 @@ function addPageHeader(
   doc: jsPDF,
   report: ServiceReport,
   assets: PdfBrandAssets,
+  company: CompanyProfile,
 ) {
   doc.setFillColor(255, 255, 255);
   doc.rect(0, 0, pageWidth, 41, "F");
@@ -238,12 +239,13 @@ function ensureSpace(
   doc: jsPDF,
   report: ServiceReport,
   assets: PdfBrandAssets,
+  company: CompanyProfile,
   y: number,
   needed: number,
 ): number {
   if (y + needed <= contentBottom) return y;
   doc.addPage();
-  addPageHeader(doc, report, assets);
+  addPageHeader(doc, report, assets, company);
   return 43;
 }
 
@@ -272,13 +274,14 @@ function addEquipment(
   doc: jsPDF,
   report: ServiceReport,
   assets: PdfBrandAssets,
+  company: CompanyProfile,
   equipment: EquipmentService,
   startY: number,
 ): number {
   // Estimate height needed for header + specs card + initial checklist items
   const estChecklistHeight = Math.min(equipment.checklist.length, 3) * 8.5;
   const initialNeeded = 38 + estChecklistHeight;
-  let y = ensureSpace(doc, report, assets, startY, initialNeeded);
+  let y = ensureSpace(doc, report, assets, company, startY, initialNeeded);
 
   y = sectionTitle(doc, `${equipment.name} - ${equipment.type}`, y);
 
@@ -317,7 +320,7 @@ function addEquipment(
   y += cardHeight + 4.5;
 
   // Checklist section header
-  y = ensureSpace(doc, report, assets, y, 14);
+  y = ensureSpace(doc, report, assets, company, y, 14);
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.2);
@@ -330,7 +333,7 @@ function addEquipment(
     const lines = doc.splitTextToSize(clean(item), textWidth);
     const rowHeight = Math.max(7.2, lines.length * 3.8 + 3.2);
 
-    y = ensureSpace(doc, report, assets, y, rowHeight + 2);
+    y = ensureSpace(doc, report, assets, company, y, rowHeight + 2);
 
     // Row card
     doc.setFillColor(...soft);
@@ -368,7 +371,7 @@ function addEquipment(
   if (equipment.measurements.length > 0) {
     const rows = Math.ceil(equipment.measurements.length / 3);
     const needed = 8 + rows * 16.5;
-    y = ensureSpace(doc, report, assets, y + 2, needed);
+    y = ensureSpace(doc, report, assets, company, y + 2, needed);
 
     doc.setTextColor(...ink);
     doc.setFont("helvetica", "bold");
@@ -418,7 +421,7 @@ function addEquipment(
     );
     const bannerH = Math.max(9, lines.length * 4.0 + 4.5);
 
-    y = ensureSpace(doc, report, assets, y + 1, bannerH + 3);
+    y = ensureSpace(doc, report, assets, company, y + 1, bannerH + 3);
 
     doc.setFillColor(...noteBg);
     doc.setDrawColor(...noteBorder);
@@ -438,6 +441,7 @@ function addEquipment(
 
 export async function buildServiceReportPdf(
   report: ServiceReport,
+  company: CompanyProfile,
   providedAssets?: PdfBrandAssets,
 ): Promise<jsPDF> {
   const assets = providedAssets ?? (await loadPdfBrandAssets());
@@ -455,7 +459,7 @@ export async function buildServiceReportPdf(
     creator: "Promach Digital Service Reports",
   });
 
-  addPageHeader(doc, report, assets);
+  addPageHeader(doc, report, assets, company);
   let y = 42;
 
   // Header Details Card
@@ -511,7 +515,7 @@ export async function buildServiceReportPdf(
   doc.setFontSize(7.8);
   for (const item of report.workPerformed) {
     const lines = doc.splitTextToSize(`-  ${clean(item)}`, contentWidth);
-    y = ensureSpace(doc, report, assets, y, lines.length * 4.0 + 1);
+    y = ensureSpace(doc, report, assets, company, y, lines.length * 4.0 + 1);
     doc.text(lines, margin, y);
     y += lines.length * 4.0 + 1;
   }
@@ -519,11 +523,11 @@ export async function buildServiceReportPdf(
 
   // Equipment Sections
   for (const eq of report.equipment) {
-    y = addEquipment(doc, report, assets, eq, y);
+    y = addEquipment(doc, report, assets, company, eq, y);
   }
 
   // Completion and Acknowledgement
-  y = ensureSpace(doc, report, assets, y, 68);
+  y = ensureSpace(doc, report, assets, company, y, 68);
   y = sectionTitle(doc, "Completion and acknowledgement", y);
 
   const ackCardH = 26;
@@ -570,7 +574,7 @@ export async function buildServiceReportPdf(
   if (report.signature) {
     const signature = report.signature;
     const signatureHeight = signature.dataUrl ? 36 : 23;
-    y = ensureSpace(doc, report, assets, y, signatureHeight + 7);
+    y = ensureSpace(doc, report, assets, company, y, signatureHeight + 7);
     doc.setFillColor(249, 251, 250);
     doc.setDrawColor(...borderSoft);
     doc.setLineWidth(0.3);
@@ -620,7 +624,7 @@ export async function buildServiceReportPdf(
   }
 
   // Remarks
-  y = ensureSpace(doc, report, assets, y, 22);
+  y = ensureSpace(doc, report, assets, company, y, 22);
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.2);
@@ -641,7 +645,7 @@ export async function buildServiceReportPdf(
     );
     const followH = Math.max(10, followUpLines.length * 4.2 + 5);
 
-    y = ensureSpace(doc, report, assets, y, followH + 4);
+    y = ensureSpace(doc, report, assets, company, y, followH + 4);
 
     doc.setFillColor(...amberBg);
     doc.setDrawColor(...amberLine);
@@ -658,7 +662,7 @@ export async function buildServiceReportPdf(
 
   // Source Transcription Review
   if (report.transcriptionNotes && report.transcriptionNotes.length > 0) {
-    y = ensureSpace(doc, report, assets, y, 25);
+    y = ensureSpace(doc, report, assets, company, y, 25);
 
     doc.setTextColor(...ink);
     doc.setFont("helvetica", "bold");
@@ -672,7 +676,7 @@ export async function buildServiceReportPdf(
 
     for (const item of report.transcriptionNotes) {
       const lines = doc.splitTextToSize(`-  ${clean(item)}`, contentWidth);
-      y = ensureSpace(doc, report, assets, y, lines.length * 3.8 + 1);
+      y = ensureSpace(doc, report, assets, company, y, lines.length * 3.8 + 1);
       doc.text(lines, margin, y);
       y += lines.length * 3.8 + 1;
     }
@@ -682,7 +686,10 @@ export async function buildServiceReportPdf(
   return doc;
 }
 
-export async function downloadServiceReportPdf(report: ServiceReport) {
-  const doc = await buildServiceReportPdf(report);
+export async function downloadServiceReportPdf(
+  report: ServiceReport,
+  company: CompanyProfile,
+) {
+  const doc = await buildServiceReportPdf(report, company);
   doc.save(`Promach-Service-Report-${report.id}.pdf`);
 }

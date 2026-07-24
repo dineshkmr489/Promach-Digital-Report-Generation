@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { serviceReports } from "../app/reportData.ts";
+import { company, serviceReports } from "../app/reportData.ts";
 import {
   buildServiceReportPdf,
   type PdfBrandAssets,
@@ -22,7 +22,7 @@ const brandAssets: PdfBrandAssets = {
 };
 
 for (const report of serviceReports) {
-  const doc = await buildServiceReportPdf(report, brandAssets);
+  const doc = await buildServiceReportPdf(report, company, brandAssets);
   const bytes = Buffer.from(doc.output("arraybuffer"));
   const filename = `Promach-Service-Report-${report.id}.pdf`;
   await writeFile(`output/pdf/${filename}`, bytes);

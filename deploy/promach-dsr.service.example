@@ -1,0 +1,22 @@
+[Unit]
+Description=Promach Digital Service Reports
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=promach
+Group=promach
+WorkingDirectory=/opt/promach-dsr
+EnvironmentFile=/etc/promach-dsr.env
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/bin/node /opt/promach-dsr/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

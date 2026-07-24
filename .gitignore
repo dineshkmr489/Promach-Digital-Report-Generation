@@ -15,7 +15,6 @@
 
 # next.js
 /.next/
-/.vinext/
 /out/
 
 # misc
@@ -30,15 +29,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
-
-# vercel
-.vercel
+!.env.example
 
 # typescript
 next-env.d.ts
 *.tsbuildinfo
-/dist/
-/.wrangler/
 /outputs/
-/work/
 /tmp/
