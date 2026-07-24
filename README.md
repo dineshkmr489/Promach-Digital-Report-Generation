@@ -1,21 +1,27 @@
 # Promach Digital Service Reports
 
-A responsive Next.js application for reviewing source-backed Promach service
-records and generating structured report PDFs.
+A responsive operational application for maintaining Promach master data,
+creating equipment service reports, securely sharing one report with a client,
+collecting a digital signature, and generating the locked signed PDF.
 
-## Current verified dataset
+## Implemented workflow
 
-- Changi General Hospital report 4122 from the supplied 9-page scan
-- Tuas Power Generation report 3930 from the supplied service-report image
-- Seven equipment service records
-- Checklist results, readings, technicians, acknowledgements, and follow-up
-- Original source-document access
-- Per-report PDF generation
-- Explicit transcription-review notes where handwriting is unclear
+- Durable master data for clients, sites, equipment, checklist templates,
+  measurement definitions, and technicians
+- Guided report creation from reusable master records
+- Per-equipment Yes / No / N/A checklist results, remarks, readings, and notes
+- Draft, awaiting-signature, and locked-completed report states
+- Cryptographically random one-report client signing links
+- Client review and signature from a phone, tablet, or desktop
+- Client signature capture directly on a Promach admin device
+- Signature channel, signer identity, timestamp, consent, and report audit trail
+- Signed PDF generation with signature image and signing metadata
+- Original Changi General Hospital report 4122 and Tuas Power report 3930
+  preserved as source-backed completed records
 
-Previous demonstration customers, reports, equipment, people, and measurements
-have been removed. The application contains only facts transcribed from the
-supplied source files.
+The admin application requires authenticated access. Client links expose only
+the assigned report and remain usable after signing so the client can download
+the completed copy. Issuing a replacement link invalidates the previous link.
 
 ## Implementation plan
 
@@ -38,7 +44,7 @@ Create a production build:
 npm run build
 ```
 
-Run source checks:
+Run verification:
 
 ```bash
 npx tsc --noEmit

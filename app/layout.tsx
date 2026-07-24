@@ -21,13 +21,13 @@ export async function generateMetadata(): Promise<Metadata> {
     "promach-dsr.openai.site";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
   const baseUrl = new URL(`${protocol}://${host}`);
-  const socialImage = new URL("/og.png", baseUrl).toString();
+  const socialImage = new URL("/og-workflow.png", baseUrl).toString();
 
   return {
     metadataBase: baseUrl,
-    title: "Promach DSR | Verified Service Records",
+    title: "Promach DSR | Digital Service Reports",
     description:
-      "Verified July 2026 service records transcribed from supplied Promach source documents.",
+      "Create, share, digitally sign, and archive Promach service reports.",
     icons: {
       icon: "/favicon.png",
       shortcut: "/favicon.png",
@@ -35,13 +35,13 @@ export async function generateMetadata(): Promise<Metadata> {
     openGraph: {
       type: "website",
       title: "Promach DSR",
-      description: "Source-backed service records. Clear, signed, complete.",
-      images: [{ url: socialImage, width: 1731, height: 909 }],
+      description: "Create once. Share securely. Sign digitally.",
+      images: [{ url: socialImage, width: 1727, height: 911 }],
     },
     twitter: {
       card: "summary_large_image",
       title: "Promach DSR",
-      description: "Source-backed service records. Clear, signed, complete.",
+      description: "Create once. Share securely. Sign digitally.",
       images: [socialImage],
     },
   };

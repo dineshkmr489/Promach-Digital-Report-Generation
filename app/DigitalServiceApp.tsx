@@ -7,62 +7,113 @@ import {
   Building2,
   Check,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  Copy,
   Download,
   Eye,
   FileCheck2,
-  FileImage,
+  FilePlus2,
   FileSearch,
   FileText,
   Gauge,
-  HardHat,
+  History,
   LayoutDashboard,
+  Link2,
+  LoaderCircle,
   MapPin,
   Menu,
+  PencilLine,
+  Plus,
   Search,
+  Send,
   ShieldCheck,
+  Signature,
   Sparkles,
+  UserRound,
+  UsersRound,
+  Wrench,
   X,
 } from "lucide-react";
 import Image from "next/image";
-import { useMemo, useState } from "react";
-import {
-  allEquipment,
-  company,
-  serviceReports,
-  sourceDocuments,
-  type ServiceReport,
-} from "./reportData";
+import { useEffect, useMemo, useState } from "react";
+import { company, sourceDocuments } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
+import { SignaturePad } from "./SignaturePad";
+import { createInitialWorkspace } from "./workspaceSeed";
+import type {
+  CreateReportPayload,
+  MasterEntity,
+  WorkspaceReport,
+  WorkspaceSnapshot,
+} from "./workspaceTypes";
 
-type View = "overview" | "reports" | "equipment" | "sources";
+type View = "overview" | "reports" | "create" | "master" | "sources";
+type MasterTab =
+  | "clients"
+  | "locations"
+  | "equipment"
+  | "checklist-templates"
+  | "technicians";
 
 const navItems = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
   { id: "reports" as const, label: "Service reports", icon: FileText },
-  { id: "equipment" as const, label: "Equipment records", icon: Gauge },
+  { id: "create" as const, label: "Create report", icon: FilePlus2 },
+  { id: "master" as const, label: "Master data", icon: Building2 },
   { id: "sources" as const, label: "Source documents", icon: FileSearch },
 ];
 
-export function DigitalServiceApp() {
+const masterTabs = [
+  { id: "clients" as const, label: "Clients", icon: Building2 },
+  { id: "locations" as const, label: "Sites", icon: MapPin },
+  { id: "equipment" as const, label: "Equipment", icon: Gauge },
+  {
+    id: "checklist-templates" as const,
+    label: "Checklists",
+    icon: ClipboardCheck,
+  },
+  { id: "technicians" as const, label: "Technicians", icon: UsersRound },
+];
+
+export function DigitalServiceApp({
+  adminName,
+  adminEmail,
+}: {
+  adminName: string;
+  adminEmail: string;
+}) {
   const [view, setView] = useState<View>("overview");
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [selectedReport, setSelectedReport] = useState<ServiceReport | null>(
-    null,
+  const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(
+    createInitialWorkspace,
   );
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [selectedReport, setSelectedReport] =
+    useState<WorkspaceReport | null>(null);
   const [query, setQuery] = useState("");
-  const [pdfMessage, setPdfMessage] = useState("");
+  const [notice, setNotice] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [refreshing, setRefreshing] = useState(true);
+  const [shareState, setShareState] = useState<{
+    report: WorkspaceReport;
+    url: string;
+  } | null>(null);
+  const [signingReport, setSigningReport] =
+    useState<WorkspaceReport | null>(null);
+
+  useEffect(() => {
+    refreshWorkspace();
+  }, []);
 
   const filteredReports = useMemo(() => {
     const normalized = query.toLowerCase().trim();
-    if (!normalized) return serviceReports;
-    return serviceReports.filter((report) =>
+    if (!normalized) return workspace.reports;
+    return workspace.reports.filter((report) =>
       [
         report.id,
         report.client,
         report.address,
+        report.status,
         report.summary,
         ...report.equipment.map((equipment) => equipment.name),
       ]
@@ -70,18 +121,87 @@ export function DigitalServiceApp() {
         .toLowerCase()
         .includes(normalized),
     );
-  }, [query]);
+  }, [query, workspace.reports]);
+
+  async function refreshWorkspace() {
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/workspace", {
+        headers: { accept: "application/json" },
+      });
+      const payload = (await response.json()) as
+        | WorkspaceSnapshot
+        | { error: string };
+      if (!response.ok || "error" in payload) {
+        throw new Error(
+          "error" in payload ? payload.error : "Unable to load workspace",
+        );
+      }
+      setWorkspace(payload);
+      setSyncError("");
+    } catch (error) {
+      setSyncError(
+        error instanceof Error
+          ? error.message
+          : "The live workspace could not be loaded.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function navigate(nextView: View) {
     setView(nextView);
     setMenuOpen(false);
   }
 
-  function generatePdf(report: ServiceReport) {
-    downloadServiceReportPdf(report);
-    setPdfMessage(`Report ${report.id} PDF generated.`);
-    window.setTimeout(() => setPdfMessage(""), 3200);
+  function toast(message: string) {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 3600);
   }
+
+  function generatePdf(report: WorkspaceReport) {
+    downloadServiceReportPdf(report);
+    toast(`Report ${report.id} PDF generated.`);
+  }
+
+  async function sendReport(report: WorkspaceReport) {
+    const response = await fetch(`/api/reports/${report.id}/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const payload = (await response.json()) as
+      | { sharePath: string; workspace: WorkspaceSnapshot }
+      | { error: string };
+    if (!response.ok || !("sharePath" in payload)) {
+      throw new Error(
+        "error" in payload ? payload.error : "Unable to send report",
+      );
+    }
+    setWorkspace(payload.workspace);
+    const updated =
+      payload.workspace.reports.find((item) => item.id === report.id) ?? report;
+    setSelectedReport(updated);
+    setShareState({
+      report: updated,
+      url: `${window.location.origin}${payload.sharePath}`,
+    });
+  }
+
+  async function signedOnAdminDevice(nextWorkspace: WorkspaceSnapshot) {
+    setWorkspace(nextWorkspace);
+    setSigningReport(null);
+    const report = nextWorkspace.reports.find(
+      (item) => item.id === signingReport?.id,
+    );
+    setSelectedReport(report ?? null);
+    toast(`Report ${report?.id ?? ""} signed and locked.`);
+  }
+
+  const awaiting = workspace.reports.filter(
+    (report) => report.status === "Awaiting client signature",
+  ).length;
 
   return (
     <div className="real-app-shell">
@@ -94,13 +214,15 @@ export function DigitalServiceApp() {
           </div>
         </div>
 
-        <div className="source-status">
+        <div className="source-status operational">
           <span className="source-status-icon">
             <ShieldCheck size={17} />
           </span>
           <div>
-            <strong>Source-only dataset</strong>
-            <small>2 supplied records · July 2026</small>
+            <strong>Operational workspace</strong>
+            <small>
+              {refreshing ? "Syncing…" : "Master data and signatures live"}
+            </small>
           </div>
         </div>
 
@@ -117,24 +239,29 @@ export function DigitalServiceApp() {
               >
                 <Icon size={19} />
                 <span>{item.label}</span>
-                {item.id === "reports" && <i>2</i>}
+                {item.id === "reports" && <i>{workspace.reports.length}</i>}
+                {item.id === "create" && <Plus size={14} />}
               </button>
             );
           })}
         </nav>
 
-        <div className="real-sidebar-note">
+        <div className="real-sidebar-note workflow-note">
           <Sparkles size={18} />
-          <strong>Data cleaned</strong>
+          <strong>Create once. Sign anywhere.</strong>
           <p>
-            Previous demonstration clients, reports, people, and measurements
-            have been removed.
+            Build from master data, share one secure report link, or collect the
+            client signature on this device.
           </p>
         </div>
 
-        <div className="company-mini">
-          <strong>{company.name}</strong>
-          <span>{company.registration}</span>
+        <div className="admin-mini">
+          <span><UserRound size={15} /></span>
+          <div>
+            <strong>{adminName}</strong>
+            <small>{adminEmail}</small>
+          </div>
+          <a href="/signout-with-chatgpt?return_to=/">Sign out</a>
         </div>
       </aside>
 
@@ -161,42 +288,76 @@ export function DigitalServiceApp() {
             <label className="real-search">
               <Search size={18} />
               <input
-                aria-label="Search supplied records"
+                aria-label="Search reports"
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search the 2 supplied reports…"
+                placeholder="Search report, client, site, equipment…"
                 value={query}
               />
             </label>
           </div>
-          <div className="dataset-pill">
-            <span />
-            Verified source workspace
+          <div className="topbar-actions">
+            {syncError ? (
+              <button className="sync-warning" onClick={refreshWorkspace} type="button">
+                <AlertTriangle size={14} /> Retry sync
+              </button>
+            ) : (
+              <div className="dataset-pill">
+                <span />
+                {awaiting} awaiting signature
+              </div>
+            )}
+            <button
+              className="quick-create"
+              onClick={() => navigate("create")}
+              type="button"
+            >
+              <Plus size={16} /> New report
+            </button>
           </div>
         </header>
 
         <div className="real-page">
           {view === "overview" && (
             <Overview
+              workspace={workspace}
               reports={filteredReports}
+              onCreate={() => navigate("create")}
               onOpen={setSelectedReport}
-              onGenerate={generatePdf}
-              onViewAll={() => navigate("reports")}
+              onViewReports={() => navigate("reports")}
             />
           )}
           {view === "reports" && (
             <Reports
               reports={filteredReports}
+              onCreate={() => navigate("create")}
               onOpen={setSelectedReport}
-              onGenerate={generatePdf}
             />
           )}
-          {view === "equipment" && <EquipmentRecords />}
+          {view === "create" && (
+            <CreateReport
+              workspace={workspace}
+              onCreated={(nextWorkspace, report) => {
+                setWorkspace(nextWorkspace);
+                setSelectedReport(report);
+                setView("reports");
+                toast(`Draft report ${report.id} created.`);
+              }}
+              onManageMaster={() => navigate("master")}
+            />
+          )}
+          {view === "master" && (
+            <MasterData
+              workspace={workspace}
+              onWorkspaceChange={setWorkspace}
+              onNotice={toast}
+            />
+          )}
           {view === "sources" && <SourceDocuments />}
         </div>
       </main>
 
       <nav className="real-mobile-nav" aria-label="Mobile navigation">
-        {navItems.map((item) => {
+        {navItems.slice(0, 4).map((item) => {
           const Icon = item.icon;
           return (
             <button
@@ -206,7 +367,7 @@ export function DigitalServiceApp() {
               type="button"
             >
               <Icon size={19} />
-              <span>{item.label.replace("Service ", "").replace(" records", "")}</span>
+              <span>{item.label.replace("Service ", "")}</span>
             </button>
           );
         })}
@@ -217,13 +378,39 @@ export function DigitalServiceApp() {
           report={selectedReport}
           onClose={() => setSelectedReport(null)}
           onGenerate={generatePdf}
+          onSend={async (report) => {
+            try {
+              await sendReport(report);
+            } catch (error) {
+              toast(
+                error instanceof Error ? error.message : "Unable to send report",
+              );
+            }
+          }}
+          onSignHere={setSigningReport}
         />
       )}
 
-      {pdfMessage && (
+      {shareState && (
+        <ShareDialog
+          state={shareState}
+          onClose={() => setShareState(null)}
+          onNotice={toast}
+        />
+      )}
+
+      {signingReport && (
+        <AdminSignatureDialog
+          report={signingReport}
+          onClose={() => setSigningReport(null)}
+          onSigned={signedOnAdminDevice}
+        />
+      )}
+
+      {notice && (
         <div className="real-toast" role="status">
           <CheckCircle2 size={19} />
-          {pdfMessage}
+          {notice}
         </div>
       )}
     </div>
@@ -253,133 +440,132 @@ function PageHeading({
   );
 }
 
+function StatusBadge({ status }: { status: WorkspaceReport["status"] }) {
+  const className =
+    status === "Completed"
+      ? "completed"
+      : status === "Awaiting client signature"
+        ? "awaiting"
+        : status === "Draft"
+          ? "draft"
+          : "attention";
+  return (
+    <span className={`workflow-status ${className}`}>
+      {status === "Completed" ? (
+        <CheckCircle2 size={13} />
+      ) : status === "Awaiting client signature" ? (
+        <Signature size={13} />
+      ) : (
+        <PencilLine size={13} />
+      )}
+      {status}
+    </span>
+  );
+}
+
 function Overview({
+  workspace,
   reports,
+  onCreate,
   onOpen,
-  onGenerate,
-  onViewAll,
+  onViewReports,
 }: {
-  reports: ServiceReport[];
-  onOpen: (report: ServiceReport) => void;
-  onGenerate: (report: ServiceReport) => void;
-  onViewAll: () => void;
+  workspace: WorkspaceSnapshot;
+  reports: WorkspaceReport[];
+  onCreate: () => void;
+  onOpen: (report: WorkspaceReport) => void;
+  onViewReports: () => void;
 }) {
+  const completed = workspace.reports.filter(
+    (report) => report.status === "Completed",
+  ).length;
+  const awaiting = workspace.reports.filter(
+    (report) => report.status === "Awaiting client signature",
+  ).length;
+  const drafts = workspace.reports.filter(
+    (report) => report.status === "Draft",
+  ).length;
+
   return (
     <>
       <PageHeading
-        eyebrow="Source review completed · 23 July 2026"
-        title="Verified July service records"
-        description="Only the data found in your supplied 9-page PDF and service-report image is shown here."
+        eyebrow="Admin workspace · live report workflow"
+        title="Service reporting, end to end"
+        description="Maintain reusable data, create each report once, share it securely with the client, and keep the signed result locked with its audit history."
         action={
-          <button
-            className="real-primary-button"
-            onClick={() => onGenerate(serviceReports[0])}
-            type="button"
-          >
-            <Download size={17} />
-            Generate report 4122 PDF
+          <button className="real-primary-button" onClick={onCreate} type="button">
+            <Plus size={17} />
+            Create service report
           </button>
         }
       />
 
-      <section className="real-metrics" aria-label="Supplied record totals">
-        <Metric icon={FileCheck2} label="Completed reports" value="02" note="Both source records" tone="green" />
-        <Metric icon={Building2} label="Customers" value="02" note="CGH and Tuas Power" tone="blue" />
-        <Metric icon={Gauge} label="Equipment serviced" value="07" note="6 CGH · 1 Tuas Power" tone="violet" />
-        <Metric icon={AlertTriangle} label="Follow-up required" value="01" note="Pre-cool chemical wash" tone="amber" />
+      <section className="real-metrics" aria-label="Workflow totals">
+        <Metric icon={FileText} label="All reports" value={String(workspace.reports.length).padStart(2, "0")} note={`${drafts} drafts`} tone="blue" />
+        <Metric icon={Signature} label="Awaiting signature" value={String(awaiting).padStart(2, "0")} note="Secure links active" tone="amber" />
+        <Metric icon={FileCheck2} label="Signed and locked" value={String(completed).padStart(2, "0")} note="PDF ready" tone="green" />
+        <Metric icon={Building2} label="Active clients" value={String(workspace.clients.length).padStart(2, "0")} note={`${workspace.equipment.length} equipment records`} tone="violet" />
       </section>
 
-      <section className="verified-banner">
-        <div className="verified-badge">
-          <ShieldCheck size={24} />
-        </div>
+      <section className="workflow-banner">
         <div>
-          <span>Source-backed workspace</span>
-          <h2>All previous demonstration data has been removed.</h2>
-          <p>
-            This workspace now contains 2 reports, 2 customers, 7 equipment
-            entries, 4 locations, and the measurements transcribed from the
-            supplied files.
-          </p>
+          <span>Digital report workflow</span>
+          <h2>One structured record from service entry to client signature.</h2>
         </div>
-        <div className="verified-stats">
-          <span><strong>9</strong> scanned PDF pages</span>
-          <span><strong>1</strong> service report image</span>
-          <span><strong>8</strong> review notes</span>
+        <div className="workflow-steps">
+          <span><i>1</i> Master data</span>
+          <ChevronRight size={16} />
+          <span><i>2</i> Draft report</span>
+          <ChevronRight size={16} />
+          <span><i>3</i> Share or sign here</span>
+          <ChevronRight size={16} />
+          <span><i>4</i> Locked PDF</span>
         </div>
       </section>
 
-      <section className="real-dashboard-grid">
+      <section className="real-dashboard-grid operational-grid">
         <article className="real-panel">
           <div className="real-panel-heading">
             <div>
-              <span>Real records</span>
-              <h2>Service reports</h2>
-              <p>Completed and acknowledged July 2026 reports.</p>
+              <span>Current work</span>
+              <h2>Recent service reports</h2>
+              <p>Open a report to send, sign, review, or download.</p>
             </div>
-            <button className="real-text-button" onClick={onViewAll} type="button">
+            <button className="real-text-button" onClick={onViewReports} type="button">
               View all <ArrowRight size={15} />
             </button>
           </div>
           <div className="real-report-list">
-            {reports.map((report) => (
-              <ReportRow
+            {reports.slice(0, 5).map((report) => (
+              <OperationalReportRow
                 key={report.id}
                 report={report}
                 onOpen={() => onOpen(report)}
-                onGenerate={() => onGenerate(report)}
               />
             ))}
           </div>
         </article>
 
-        <article className="real-panel follow-up-panel">
+        <article className="real-panel action-panel">
           <div className="real-panel-heading">
             <div>
-              <span>Needs action</span>
-              <h2>Recorded follow-up</h2>
-            </div>
-            <span className="follow-count">1</span>
-          </div>
-          <div className="follow-card">
-            <span className="follow-icon"><AlertTriangle size={20} /></span>
-            <div>
-              <strong>Pre-cool coil chemical wash</strong>
-              <p>
-                Report 4122 records the Level 2 pre-cool unit coil as dirty or
-                choked and requiring a chemical wash.
-              </p>
-              <button onClick={() => onOpen(serviceReports[0])} type="button">
-                Open report 4122 <ChevronRight size={15} />
-              </button>
+              <span>Ready to use</span>
+              <h2>Master data coverage</h2>
             </div>
           </div>
-          <div className="data-quality">
-            <FileSearch size={19} />
-            <div>
-              <strong>Transcription review</strong>
-              <p>
-                A repeated serial number and partially unclear handwriting are
-                flagged inside the report instead of being silently corrected.
-              </p>
-            </div>
+          <div className="master-coverage">
+            <Coverage icon={Building2} label="Clients" count={workspace.clients.length} />
+            <Coverage icon={MapPin} label="Sites" count={workspace.locations.length} />
+            <Coverage icon={Gauge} label="Equipment" count={workspace.equipment.length} />
+            <Coverage icon={ClipboardCheck} label="Checklists" count={workspace.checklistTemplates.length} />
+            <Coverage icon={UsersRound} label="Technicians" count={workspace.technicians.length} />
           </div>
+          <button className="create-callout" onClick={onCreate} type="button">
+            <span><FilePlus2 size={21} /></span>
+            <div><strong>Create the next report</strong><small>Choose a client and the app loads its sites, equipment, and checklists.</small></div>
+            <ArrowRight size={17} />
+          </button>
         </article>
-      </section>
-
-      <section className="real-panel equipment-summary">
-        <div className="real-panel-heading">
-          <div>
-            <span>Equipment coverage</span>
-            <h2>What the supplied records contain</h2>
-          </div>
-        </div>
-        <div className="equipment-summary-grid">
-          <SummaryType label="Air curtain" count="4" detail="KDK · Model 3015UA" />
-          <SummaryType label="AHU" count="2" detail="CGH Level 2 + Tuas DX AHU-15" />
-          <SummaryType label="Pre-cool unit" count="1" detail="CGH Level 2 AHU room" />
-          <SummaryType label="Electrical readings" count="8" detail="6 AHU phase readings + 2 averages" />
-        </div>
       </section>
     </>
   );
@@ -392,7 +578,7 @@ function Metric({
   note,
   tone,
 }: {
-  icon: typeof FileCheck2;
+  icon: typeof FileText;
   label: string;
   value: string;
   note: string;
@@ -408,98 +594,91 @@ function Metric({
   );
 }
 
-function SummaryType({
+function Coverage({
+  icon: Icon,
   label,
   count,
-  detail,
 }: {
+  icon: typeof Building2;
   label: string;
-  count: string;
-  detail: string;
+  count: number;
 }) {
   return (
-    <article>
-      <span>{count}</span>
-      <div><strong>{label}</strong><small>{detail}</small></div>
-    </article>
+    <div>
+      <span><Icon size={16} /></span>
+      <strong>{label}</strong>
+      <small>{count} active</small>
+    </div>
   );
 }
 
-function ReportRow({
+function OperationalReportRow({
   report,
   onOpen,
-  onGenerate,
 }: {
-  report: ServiceReport;
+  report: WorkspaceReport;
   onOpen: () => void;
-  onGenerate: () => void;
 }) {
   return (
-    <article className="real-report-row">
-      <button className="report-row-main" onClick={onOpen} type="button">
-        <span className="report-number"><small>Report</small><strong>#{report.id}</strong></span>
-        <span className="report-client">
-          <strong>{report.client}</strong>
-          <small><MapPin size={13} /> {report.address}</small>
-        </span>
-        <span className="report-date"><small>Service date</small><strong>{report.date}</strong></span>
-        <span className="report-assets"><small>Equipment</small><strong>{report.equipment.length} serviced</strong></span>
-        <span className={`real-status ${report.condition === "Follow-up required" ? "follow" : ""}`}>
-          {report.condition === "Follow-up required" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
-          {report.condition}
-        </span>
-        <ChevronRight size={18} />
-      </button>
-      <button
-        className="row-pdf-button"
-        onClick={onGenerate}
-        type="button"
-        aria-label={`Generate PDF for report ${report.id}`}
-      >
-        <Download size={16} /> PDF
-      </button>
-    </article>
+    <button className="operational-report-row" onClick={onOpen} type="button">
+      <span className="report-number"><small>Report</small><strong>#{report.id}</strong></span>
+      <span className="report-client">
+        <strong>{report.client}</strong>
+        <small><MapPin size={13} /> {report.address}</small>
+      </span>
+      <span className="report-date"><small>Service date</small><strong>{report.date}</strong></span>
+      <StatusBadge status={report.status} />
+      <ChevronRight size={18} />
+    </button>
   );
 }
 
 function Reports({
   reports,
+  onCreate,
   onOpen,
-  onGenerate,
 }: {
-  reports: ServiceReport[];
-  onOpen: (report: ServiceReport) => void;
-  onGenerate: (report: ServiceReport) => void;
+  reports: WorkspaceReport[];
+  onCreate: () => void;
+  onOpen: (report: WorkspaceReport) => void;
 }) {
+  const statusCounts = reports.reduce<Record<string, number>>((counts, report) => {
+    counts[report.status] = (counts[report.status] ?? 0) + 1;
+    return counts;
+  }, {});
   return (
     <>
       <PageHeading
-        eyebrow="2 source-backed records"
+        eyebrow={`${reports.length} report records`}
         title="Service reports"
-        description="No demonstration reports remain. Select either record to review its complete transcription and generate a PDF."
+        description="Draft, send, collect the client signature, and download the locked signed copy from one place."
+        action={
+          <button className="real-primary-button" onClick={onCreate} type="button">
+            <Plus size={17} /> New report
+          </button>
+        }
       />
-      <section className="real-panel reports-page">
-        <div className="report-page-toolbar">
-          <div>
-            <span className="active">All supplied reports <i>2</i></span>
-            <span>Completed <i>2</i></span>
-          </div>
-          <span className="source-only-label"><ShieldCheck size={15} /> Source-only</span>
+      <section className="report-status-summary">
+        {["Draft", "Awaiting client signature", "Completed"].map((status) => (
+          <span key={status}>
+            <strong>{statusCounts[status] ?? 0}</strong>
+            {status}
+          </span>
+        ))}
+      </section>
+      <section className="real-panel reports-page operational-reports">
+        <div className="report-table-head">
+          <span>Report</span><span>Client and site</span><span>Service date</span><span>Equipment</span><span>Status</span><span />
         </div>
-        <div className="real-report-list large">
+        <div>
           {reports.map((report) => (
-            <ReportRow
-              key={report.id}
-              report={report}
-              onOpen={() => onOpen(report)}
-              onGenerate={() => onGenerate(report)}
-            />
+            <OperationalReportRow key={report.id} report={report} onOpen={() => onOpen(report)} />
           ))}
           {!reports.length && (
             <div className="real-empty">
               <Search size={24} />
-              <strong>No matching supplied record</strong>
-              <span>Try searching by report number, client, or equipment.</span>
+              <strong>No matching report</strong>
+              <span>Try another report number, client, site, or status.</span>
             </div>
           )}
         </div>
@@ -508,59 +687,726 @@ function Reports({
   );
 }
 
-function EquipmentRecords() {
-  const [client, setClient] = useState("All customers");
-  const visibleEquipment =
-    client === "All customers"
-      ? allEquipment
-      : allEquipment.filter((equipment) => equipment.client === client);
+function CreateReport({
+  workspace,
+  onCreated,
+  onManageMaster,
+}: {
+  workspace: WorkspaceSnapshot;
+  onCreated: (workspace: WorkspaceSnapshot, report: WorkspaceReport) => void;
+  onManageMaster: () => void;
+}) {
+  const [step, setStep] = useState(1);
+  const [form, setForm] = useState<CreateReportPayload>({
+    clientId: "",
+    locationId: "",
+    serviceDate: new Date().toISOString().slice(0, 10),
+    serviceType: "Regular service",
+    summary: "",
+    workPerformed: [""],
+    equipmentIds: [],
+    checklistResults: {},
+    measurements: {},
+    equipmentNotes: {},
+    technicianIds: [],
+    remarks: "",
+    followUp: "No follow-up required.",
+  });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const locations = workspace.locations.filter(
+    (item) => item.clientId === form.clientId,
+  );
+  const equipment = workspace.equipment.filter(
+    (item) =>
+      item.clientId === form.clientId && item.locationId === form.locationId,
+  );
+  const selectedClient = workspace.clients.find(
+    (item) => item.id === form.clientId,
+  );
+  const selectedLocation = workspace.locations.find(
+    (item) => item.id === form.locationId,
+  );
+  const selectedEquipment = workspace.equipment.filter((item) =>
+    form.equipmentIds.includes(item.id),
+  );
+  const selectedTechnicians = workspace.technicians.filter((item) =>
+    form.technicianIds.includes(item.id),
+  );
+
+  function update<K extends keyof CreateReportPayload>(
+    key: K,
+    value: CreateReportPayload[K],
+  ) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleArray(
+    key: "technicianIds",
+    value: string,
+  ) {
+    setForm((current) => ({
+      ...current,
+      [key]: current[key].includes(value)
+        ? current[key].filter((item) => item !== value)
+        : [...current[key], value],
+    }));
+  }
+
+  function toggleEquipment(equipmentId: string) {
+    const item = workspace.equipment.find(
+      (candidate) => candidate.id === equipmentId,
+    );
+    const template = workspace.checklistTemplates.find(
+      (candidate) => candidate.id === item?.checklistTemplateId,
+    );
+    setForm((current) => {
+      const selected = current.equipmentIds.includes(equipmentId);
+      if (selected) {
+        return {
+          ...current,
+          equipmentIds: current.equipmentIds.filter(
+            (id) => id !== equipmentId,
+          ),
+        };
+      }
+      return {
+        ...current,
+        equipmentIds: [...current.equipmentIds, equipmentId],
+        checklistResults: {
+          ...current.checklistResults,
+          [equipmentId]: (template?.items ?? []).map((checkItem) => ({
+            item: checkItem,
+            result: "YES" as const,
+            remark: "",
+          })),
+        },
+        measurements: {
+          ...current.measurements,
+          [equipmentId]: (template?.measurements ?? []).map((measurement) => ({
+            ...measurement,
+            value: "",
+          })),
+        },
+        equipmentNotes: {
+          ...current.equipmentNotes,
+          [equipmentId]: "Service checklist completed.",
+        },
+      };
+    });
+  }
+
+  function updateChecklistResult(
+    equipmentId: string,
+    index: number,
+    fieldName: "result" | "remark",
+    value: string,
+  ) {
+    setForm((current) => {
+      const next = [...(current.checklistResults[equipmentId] ?? [])];
+      const existing = next[index];
+      if (!existing) return current;
+      next[index] = {
+        ...existing,
+        [fieldName]: value,
+      } as typeof existing;
+      return {
+        ...current,
+        checklistResults: {
+          ...current.checklistResults,
+          [equipmentId]: next,
+        },
+      };
+    });
+  }
+
+  function updateMeasurement(
+    equipmentId: string,
+    index: number,
+    value: string,
+  ) {
+    setForm((current) => {
+      const next = [...(current.measurements[equipmentId] ?? [])];
+      if (!next[index]) return current;
+      next[index] = { ...next[index], value };
+      return {
+        ...current,
+        measurements: { ...current.measurements, [equipmentId]: next },
+      };
+    });
+  }
+
+  function next() {
+    setError("");
+    if (step === 1 && (!form.clientId || !form.locationId || !form.serviceDate)) {
+      setError("Select the client, service site, and service date.");
+      return;
+    }
+    if (
+      step === 2 &&
+      (!form.equipmentIds.length ||
+        !form.summary.trim() ||
+        !form.workPerformed.some((item) => item.trim()))
+    ) {
+      setError("Select equipment and add the service summary and work performed.");
+      return;
+    }
+    setStep((current) => Math.min(3, current + 1));
+  }
+
+  async function createDraft() {
+    if (!form.technicianIds.length) {
+      setError("Select at least one technician.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          workPerformed: form.workPerformed.filter((item) => item.trim()),
+        }),
+      });
+      const payload = (await response.json()) as
+        | { workspace: WorkspaceSnapshot; report: WorkspaceReport }
+        | { error: string };
+      if (!response.ok || !("workspace" in payload)) {
+        throw new Error(
+          "error" in payload ? payload.error : "Unable to create draft",
+        );
+      }
+      onCreated(payload.workspace, payload.report);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to create draft",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <>
       <PageHeading
-        eyebrow="7 transcribed equipment records"
-        title="Equipment serviced"
-        description="Equipment details below come only from the supplied PDF and image."
-        action={
-          <label className="real-select">
-            <select value={client} onChange={(event) => setClient(event.target.value)}>
-              <option>All customers</option>
-              <option>Changi General Hospital</option>
-              <option>Tuas Power Generation Pte. Ltd.</option>
-            </select>
-            <ChevronDown size={15} />
-          </label>
-        }
+        eyebrow="Guided report builder"
+        title="Create service report"
+        description="The selected master data is copied into the report so the signed version always preserves the exact client, site, equipment, checklist, and technicians used."
       />
-      <div className="real-equipment-grid">
-        {visibleEquipment.map((equipment) => (
-          <article className="real-panel equipment-card" key={equipment.id}>
-            <div className="equipment-card-top">
-              <span className="equipment-type-icon">
-                {equipment.type === "Air Curtain" ? <Gauge size={21} /> : <ClipboardCheck size={21} />}
-              </span>
-              <span className="real-status"><CheckCircle2 size={13} /> Completed</span>
-            </div>
-            <span className="equipment-client">{equipment.client}</span>
-            <h2>{equipment.name}</h2>
-            <p>{equipment.type}</p>
-            <dl>
-              <div><dt>Brand</dt><dd>{equipment.brand}</dd></div>
-              <div><dt>Model</dt><dd>{equipment.model}</dd></div>
-              <div><dt>Serial</dt><dd>{equipment.serial}</dd></div>
-              <div><dt>Location</dt><dd>{equipment.location}</dd></div>
-            </dl>
-            <div className="equipment-result">
-              <CheckCircle2 size={16} />
-              <span><strong>{equipment.checklist.length}/{equipment.checklist.length} checklist items</strong><small>{equipment.note}</small></span>
-            </div>
-            {equipment.reviewRequired && (
-              <div className="review-chip"><AlertTriangle size={13} /> Source confirmation needed</div>
+      <div className="create-layout">
+        <aside className="create-steps">
+          {[
+            ["1", "Client and visit", "Choose customer, site, and date"],
+            ["2", "Service details", "Equipment, checklist, and work"],
+            ["3", "Team and review", "Technicians and final confirmation"],
+          ].map(([number, title, copy], index) => (
+            <button
+              className={step === index + 1 ? "active" : step > index + 1 ? "done" : ""}
+              key={number}
+              onClick={() => index + 1 < step && setStep(index + 1)}
+              type="button"
+            >
+              <span>{step > index + 1 ? <Check size={16} /> : number}</span>
+              <div><strong>{title}</strong><small>{copy}</small></div>
+            </button>
+          ))}
+          <div className="master-shortcut">
+            <Building2 size={18} />
+            <strong>Missing a record?</strong>
+            <p>Add a new client, site, equipment item, checklist, or technician first.</p>
+            <button onClick={onManageMaster} type="button">Open master data <ArrowRight size={14} /></button>
+          </div>
+        </aside>
+
+        <section className="real-panel create-form">
+          {step === 1 && (
+            <>
+              <FormSectionHeading number="01" title="Client and service visit" description="Select from reusable master data." />
+              <div className="form-grid two">
+                <label>
+                  Client
+                  <select
+                    required
+                    value={form.clientId}
+                    onChange={(event) => {
+                      update("clientId", event.target.value);
+                      update("locationId", "");
+                      update("equipmentIds", []);
+                    }}
+                  >
+                    <option value="">Select client</option>
+                    {workspace.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Service site
+                  <select
+                    disabled={!form.clientId}
+                    required
+                    value={form.locationId}
+                    onChange={(event) => {
+                      update("locationId", event.target.value);
+                      update("equipmentIds", []);
+                    }}
+                  >
+                    <option value="">Select site</option>
+                    {locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Service date
+                  <input required type="date" value={form.serviceDate} onChange={(event) => update("serviceDate", event.target.value)} />
+                </label>
+                <label>
+                  Service type
+                  <select value={form.serviceType} onChange={(event) => update("serviceType", event.target.value)}>
+                    <option>Regular service</option>
+                    <option>Warranty service</option>
+                    <option>Complaint / breakdown</option>
+                    <option>Inspection</option>
+                  </select>
+                </label>
+              </div>
+              {selectedClient && selectedLocation && (
+                <div className="selection-preview">
+                  <Building2 size={18} />
+                  <div><strong>{selectedClient.name}</strong><span>{selectedLocation.name} · {selectedLocation.address}</span></div>
+                  <CheckCircle2 size={18} />
+                </div>
+              )}
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <FormSectionHeading number="02" title="Equipment and work completed" description="Equipment automatically carries its assigned checklist." />
+              {!equipment.length ? (
+                <div className="inline-empty">
+                  <Gauge size={24} />
+                  <strong>No equipment at this site</strong>
+                  <p>Add the site equipment in master data before creating this report.</p>
+                  <button className="real-secondary-button" onClick={onManageMaster} type="button">Open master data</button>
+                </div>
+              ) : (
+                <div className="equipment-picker">
+                  {equipment.map((item) => {
+                    const template = workspace.checklistTemplates.find((templateItem) => templateItem.id === item.checklistTemplateId);
+                    const selected = form.equipmentIds.includes(item.id);
+                    return (
+                      <button className={selected ? "selected" : ""} key={item.id} onClick={() => toggleEquipment(item.id)} type="button">
+                        <span>{selected ? <Check size={16} /> : <Gauge size={16} />}</span>
+                        <div><strong>{item.name}</strong><small>{item.type} · {item.brand} {item.model}</small><i>{template?.items.length ?? 0} checklist items</i></div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {selectedEquipment.map((item) => {
+                const template = workspace.checklistTemplates.find(
+                  (candidate) => candidate.id === item.checklistTemplateId,
+                );
+                const results = form.checklistResults[item.id] ?? [];
+                const readings = form.measurements[item.id] ?? [];
+                return (
+                  <article className="service-capture" key={item.id}>
+                    <header>
+                      <div>
+                        <span>{item.type}</span>
+                        <h3>{item.name}</h3>
+                      </div>
+                      <strong>{template?.name}</strong>
+                    </header>
+                    <div className="capture-checklist">
+                      {(template?.items ?? []).map((checkItem, index) => (
+                        <div key={checkItem}>
+                          <p>{checkItem}</p>
+                          <select
+                            aria-label={`Result for ${checkItem}`}
+                            value={results[index]?.result ?? "YES"}
+                            onChange={(event) =>
+                              updateChecklistResult(
+                                item.id,
+                                index,
+                                "result",
+                                event.target.value,
+                              )
+                            }
+                          >
+                            <option>YES</option>
+                            <option>NO</option>
+                            <option>N/A</option>
+                          </select>
+                          <input
+                            aria-label={`Remark for ${checkItem}`}
+                            placeholder="Remark (optional)"
+                            value={results[index]?.remark ?? ""}
+                            onChange={(event) =>
+                              updateChecklistResult(
+                                item.id,
+                                index,
+                                "remark",
+                                event.target.value,
+                              )
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {!!readings.length && (
+                      <div className="capture-readings">
+                        <span>Equipment readings</span>
+                        <div>
+                          {readings.map((reading, index) => (
+                            <label key={reading.label}>
+                              {reading.label}
+                              <span>
+                                <input
+                                  value={reading.value}
+                                  onChange={(event) =>
+                                    updateMeasurement(
+                                      item.id,
+                                      index,
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Value"
+                                />
+                                <i>{reading.unit}</i>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <label className="capture-note">
+                      Equipment note
+                      <input
+                        value={form.equipmentNotes[item.id] ?? ""}
+                        onChange={(event) =>
+                          update("equipmentNotes", {
+                            ...form.equipmentNotes,
+                            [item.id]: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  </article>
+                );
+              })}
+              <div className="form-grid">
+                <label>
+                  Service summary
+                  <textarea rows={3} value={form.summary} onChange={(event) => update("summary", event.target.value)} placeholder="Summarize the visit and equipment serviced." />
+                </label>
+                <fieldset className="work-items">
+                  <legend>Work performed</legend>
+                  {form.workPerformed.map((item, index) => (
+                    <div key={index}>
+                      <span>{index + 1}</span>
+                      <input value={item} onChange={(event) => {
+                        const next = [...form.workPerformed];
+                        next[index] = event.target.value;
+                        update("workPerformed", next);
+                      }} placeholder="Describe one completed activity" />
+                      {form.workPerformed.length > 1 && (
+                        <button aria-label="Remove work item" onClick={() => update("workPerformed", form.workPerformed.filter((_, itemIndex) => itemIndex !== index))} type="button"><X size={15} /></button>
+                      )}
+                    </div>
+                  ))}
+                  <button onClick={() => update("workPerformed", [...form.workPerformed, ""])} type="button"><Plus size={14} /> Add work item</button>
+                </fieldset>
+                <div className="form-grid two">
+                  <label>
+                    Remarks
+                    <textarea rows={3} value={form.remarks} onChange={(event) => update("remarks", event.target.value)} placeholder="General remarks" />
+                  </label>
+                  <label>
+                    Follow-up
+                    <textarea rows={3} value={form.followUp} onChange={(event) => update("followUp", event.target.value)} placeholder="Required follow-up or no follow-up required" />
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
+
+          {step === 3 && (
+            <>
+              <FormSectionHeading number="03" title="Technicians and final review" description="The draft can be reviewed again before it is sent." />
+              <div className="technician-picker">
+                {workspace.technicians.map((item) => {
+                  const selected = form.technicianIds.includes(item.id);
+                  return (
+                    <button className={selected ? "selected" : ""} key={item.id} onClick={() => toggleArray("technicianIds", item.id)} type="button">
+                      <span>{selected ? <Check size={16} /> : <UserRound size={16} />}</span>
+                      <div><strong>{item.name}</strong><small>{item.designation}</small></div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="report-review-card">
+                <header><span>Draft preview</span><strong>New report number assigned on save</strong></header>
+                <dl>
+                  <div><dt>Client</dt><dd>{selectedClient?.name}</dd></div>
+                  <div><dt>Site</dt><dd>{selectedLocation?.name}</dd></div>
+                  <div><dt>Service date</dt><dd>{form.serviceDate}</dd></div>
+                  <div><dt>Service type</dt><dd>{form.serviceType}</dd></div>
+                </dl>
+                <section><span>Equipment</span><p>{selectedEquipment.map((item) => item.name).join(", ")}</p></section>
+                <section><span>Technicians</span><p>{selectedTechnicians.map((item) => item.name).join(", ") || "Select below"}</p></section>
+                <section><span>Summary</span><p>{form.summary}</p></section>
+              </div>
+              <div className="lock-explainer">
+                <ShieldCheck size={18} />
+                <p><strong>Signing rule:</strong> the report stays editable as a draft. After a client signs, it becomes locked and the PDF uses that exact signed version.</p>
+              </div>
+            </>
+          )}
+
+          {error && <p className="form-error">{error}</p>}
+          <footer className="create-footer">
+            <button className="real-secondary-button" disabled={step === 1 || saving} onClick={() => { setStep((current) => current - 1); setError(""); }} type="button"><ArrowLeft size={15} /> Back</button>
+            {step < 3 ? (
+              <button className="real-primary-button" onClick={next} type="button">Continue <ArrowRight size={15} /></button>
+            ) : (
+              <button className="real-primary-button" disabled={saving} onClick={createDraft} type="button">
+                {saving ? <LoaderCircle className="spin" size={16} /> : <FilePlus2 size={16} />}
+                {saving ? "Creating draft…" : "Create draft report"}
+              </button>
             )}
-          </article>
-        ))}
+          </footer>
+        </section>
       </div>
     </>
+  );
+}
+
+function FormSectionHeading({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="form-section-heading">
+      <span>{number}</span>
+      <div><h2>{title}</h2><p>{description}</p></div>
+    </div>
+  );
+}
+
+function MasterData({
+  workspace,
+  onWorkspaceChange,
+  onNotice,
+}: {
+  workspace: WorkspaceSnapshot;
+  onWorkspaceChange: (workspace: WorkspaceSnapshot) => void;
+  onNotice: (message: string) => void;
+}) {
+  const [tab, setTab] = useState<MasterTab>("clients");
+  const [adding, setAdding] = useState(false);
+  return (
+    <>
+      <PageHeading
+        eyebrow="Reusable operational records"
+        title="Master data"
+        description="Create the clients, sites, equipment, service checklists, and technicians used when building reports."
+        action={
+          <button className="real-primary-button" onClick={() => setAdding(true)} type="button">
+            <Plus size={17} /> Add {masterTabs.find((item) => item.id === tab)?.label.slice(0, -1)}
+          </button>
+        }
+      />
+      <div className="master-layout">
+        <nav className="master-tabs" aria-label="Master data sections">
+          {masterTabs.map((item) => {
+            const Icon = item.icon;
+            const count =
+              item.id === "checklist-templates"
+                ? workspace.checklistTemplates.length
+                : workspace[item.id].length;
+            return (
+              <button className={tab === item.id ? "active" : ""} key={item.id} onClick={() => setTab(item.id)} type="button">
+                <Icon size={17} /><span>{item.label}</span><i>{count}</i>
+              </button>
+            );
+          })}
+        </nav>
+        <section className="real-panel master-content">
+          <MasterList tab={tab} workspace={workspace} />
+        </section>
+      </div>
+      {adding && (
+        <MasterDataDialog
+          entity={tab}
+          workspace={workspace}
+          onClose={() => setAdding(false)}
+          onSaved={(nextWorkspace) => {
+            onWorkspaceChange(nextWorkspace);
+            setAdding(false);
+            onNotice("Master data saved.");
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function MasterList({
+  tab,
+  workspace,
+}: {
+  tab: MasterTab;
+  workspace: WorkspaceSnapshot;
+}) {
+  const clientName = (clientId: string) =>
+    workspace.clients.find((client) => client.id === clientId)?.name ?? "Unknown client";
+  const locationName = (locationId: string) =>
+    workspace.locations.find((location) => location.id === locationId)?.name ?? "Unknown site";
+
+  if (tab === "clients") {
+    return <div className="master-card-grid">{workspace.clients.map((item) => (
+      <article key={item.id}><span className="master-icon"><Building2 size={19} /></span><StatusPill /><h2>{item.name}</h2><p>{item.contactName || "No contact recorded"}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div><div><dt>Address</dt><dd>{item.address}</dd></div></dl></article>
+    ))}</div>;
+  }
+  if (tab === "locations") {
+    return <div className="master-card-grid">{workspace.locations.map((item) => (
+      <article key={item.id}><span className="master-icon"><MapPin size={19} /></span><StatusPill /><span className="record-owner">{clientName(item.clientId)}</span><h2>{item.name}</h2><p>{item.address}</p><div className="record-meta">{workspace.equipment.filter((equipment) => equipment.locationId === item.id).length} equipment records</div></article>
+    ))}</div>;
+  }
+  if (tab === "equipment") {
+    return <div className="master-table"><div className="master-table-head"><span>Equipment</span><span>Client / site</span><span>Identification</span><span>Checklist</span></div>{workspace.equipment.map((item) => (
+      <article key={item.id}><span><i><Gauge size={16} /></i><b>{item.name}</b><small>{item.type}</small></span><span><b>{clientName(item.clientId)}</b><small>{locationName(item.locationId)}</small></span><span><b>{item.brand} {item.model}</b><small>Serial: {item.serial}</small></span><span><b>{workspace.checklistTemplates.find((template) => template.id === item.checklistTemplateId)?.name ?? "No template"}</b><small>Loaded into new reports</small></span></article>
+    ))}</div>;
+  }
+  if (tab === "checklist-templates") {
+    return <div className="checklist-master-grid">{workspace.checklistTemplates.map((item) => (
+      <article key={item.id}><header><span><ClipboardCheck size={18} /></span><div><strong>{item.name}</strong><small>{item.equipmentType}</small></div><i>{item.items.length} checks · {item.measurements.length} readings</i></header><ol>{item.items.slice(0, 4).map((check) => <li key={check}>{check}</li>)}</ol>{item.items.length > 4 && <p>+ {item.items.length - 4} more checklist items</p>}</article>
+    ))}</div>;
+  }
+  return <div className="master-card-grid technicians">{workspace.technicians.map((item) => (
+    <article key={item.id}><span className="master-avatar">{item.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><StatusPill /><h2>{item.name}</h2><p>{item.designation}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div></dl></article>
+  ))}</div>;
+}
+
+function StatusPill() {
+  return <span className="master-active"><span /> Active</span>;
+}
+
+function MasterDataDialog({
+  entity,
+  workspace,
+  onClose,
+  onSaved,
+}: {
+  entity: MasterEntity;
+  workspace: WorkspaceSnapshot;
+  onClose: () => void;
+  onSaved: (workspace: WorkspaceSnapshot) => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const singular =
+    entity === "checklist-templates"
+      ? "checklist template"
+      : entity === "equipment"
+        ? "equipment"
+        : entity.slice(0, -1);
+
+  function field(name: string, value: string) {
+    setForm((current) => ({ ...current, [name]: value }));
+  }
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const payload =
+        entity === "checklist-templates"
+          ? {
+              ...form,
+              items: (form.items ?? "")
+                .split("\n")
+                .map((item) => item.trim())
+                .filter(Boolean),
+              measurements: (form.measurements ?? "")
+                .split("\n")
+                .map((line) => {
+                  const [label, unit = ""] = line.split("|");
+                  return { label: label.trim(), unit: unit.trim() };
+                })
+                .filter((item) => item.label),
+            }
+          : form;
+      const response = await fetch(`/api/master/${entity}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json()) as
+        | WorkspaceSnapshot
+        | { error: string };
+      if (!response.ok || "error" in result) {
+        throw new Error("error" in result ? result.error : "Unable to save");
+      }
+      onSaved(result);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectedClientLocations = workspace.locations.filter(
+    (item) => !form.clientId || item.clientId === form.clientId,
+  );
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="master-dialog-title">
+      <button className="modal-scrim" aria-label="Close" onClick={onClose} type="button" />
+      <form className="form-dialog" onSubmit={save}>
+        <header><div><span>Master data</span><h2 id="master-dialog-title">Add {singular}</h2></div><button aria-label="Close" onClick={onClose} type="button"><X size={19} /></button></header>
+        <div className="dialog-body form-grid">
+          {(entity === "locations" || entity === "equipment") && (
+            <label>Client<select required value={form.clientId ?? ""} onChange={(event) => { field("clientId", event.target.value); field("locationId", ""); }}><option value="">Select client</option>{workspace.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          )}
+          {entity === "equipment" && (
+            <label>Service site<select required value={form.locationId ?? ""} onChange={(event) => field("locationId", event.target.value)}><option value="">Select site</option>{selectedClientLocations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          )}
+          <label>{entity === "clients" ? "Client name" : entity === "locations" ? "Site name" : entity === "equipment" ? "Equipment name / tag" : entity === "checklist-templates" ? "Template name" : "Technician name"}<input required value={form.name ?? ""} onChange={(event) => field("name", event.target.value)} /></label>
+          {entity === "clients" && <>
+            <label>Primary contact<input value={form.contactName ?? ""} onChange={(event) => field("contactName", event.target.value)} /></label>
+            <div className="form-grid two"><label>Email<input type="email" value={form.email ?? ""} onChange={(event) => field("email", event.target.value)} /></label><label>Phone<input value={form.phone ?? ""} onChange={(event) => field("phone", event.target.value)} /></label></div>
+            <label>Client address<textarea required rows={3} value={form.address ?? ""} onChange={(event) => field("address", event.target.value)} /></label>
+          </>}
+          {entity === "locations" && <label>Site address<textarea required rows={3} value={form.address ?? ""} onChange={(event) => field("address", event.target.value)} /></label>}
+          {entity === "equipment" && <>
+            <label>Equipment type<input required value={form.type ?? ""} onChange={(event) => field("type", event.target.value)} placeholder="e.g. Air Handling Unit" /></label>
+            <div className="form-grid three"><label>Brand<input value={form.brand ?? ""} onChange={(event) => field("brand", event.target.value)} /></label><label>Model<input value={form.model ?? ""} onChange={(event) => field("model", event.target.value)} /></label><label>Serial number<input value={form.serial ?? ""} onChange={(event) => field("serial", event.target.value)} /></label></div>
+            <label>Checklist template<select required value={form.checklistTemplateId ?? ""} onChange={(event) => field("checklistTemplateId", event.target.value)}><option value="">Select checklist</option>{workspace.checklistTemplates.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.equipmentType}</option>)}</select></label>
+          </>}
+          {entity === "checklist-templates" && <>
+            <label>Equipment type<input required value={form.equipmentType ?? ""} onChange={(event) => field("equipmentType", event.target.value)} placeholder="e.g. Air Curtain" /></label>
+            <label>Checklist items <small>One item per line</small><textarea required rows={9} value={form.items ?? ""} onChange={(event) => field("items", event.target.value)} placeholder={"Check motor operation\nClean housing and fan blades\nTest controller response"} /></label>
+            <label>Measurement definitions <small>Optional · one per line as Label | Unit</small><textarea rows={5} value={form.measurements ?? ""} onChange={(event) => field("measurements", event.target.value)} placeholder={"R-phase current | A\nOff-coil temperature | °C"} /></label>
+          </>}
+          {entity === "technicians" && <>
+            <label>Designation<input required value={form.designation ?? "Service Technician"} onChange={(event) => field("designation", event.target.value)} /></label>
+            <div className="form-grid two"><label>Email<input type="email" value={form.email ?? ""} onChange={(event) => field("email", event.target.value)} /></label><label>Phone<input value={form.phone ?? ""} onChange={(event) => field("phone", event.target.value)} /></label></div>
+          </>}
+          {error && <p className="form-error">{error}</p>}
+        </div>
+        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{saving ? "Saving…" : `Save ${singular}`}</button></footer>
+      </form>
+    </div>
   );
 }
 
@@ -570,60 +1416,25 @@ function SourceDocuments() {
       <PageHeading
         eyebrow="Original supplied evidence"
         title="Source documents"
-        description="Open the original files used for this transcription and compare them with the structured records."
+        description="The two imported reports remain available as reference records alongside reports created digitally."
       />
       <div className="source-grid">
         {sourceDocuments.map((document) => (
           <article className="real-panel source-card" key={document.reportId}>
             <a href={document.href} target="_blank" rel="noreferrer">
-              <Image
-                src={document.thumbnail}
-                alt={`${document.client} original service report`}
-                fill
-                sizes="(max-width: 700px) 115px, 210px"
-                unoptimized
-              />
+              <Image src={document.thumbnail} alt={`${document.client} original service report`} fill sizes="(max-width: 700px) 115px, 210px" unoptimized />
               <span className="source-open"><Eye size={16} /> Open original</span>
             </a>
             <div className="source-card-body">
-              <span className="source-file-type">
-                {document.pages.includes("Pages") ? <FileText size={15} /> : <FileImage size={15} />}
-                {document.pages}
-              </span>
+              <span className="source-file-type"><FileSearch size={15} /> {document.pages}</span>
               <h2>{document.client}</h2>
               <p>Service Report / Delivery Order #{document.reportId}</p>
-              <div>
-                <span><ShieldCheck size={15} /> Original preserved</span>
-                <span><FileSearch size={15} /> {document.noteCount} review notes</span>
-              </div>
-              <a className="real-secondary-button" href={document.href} target="_blank" rel="noreferrer">
-                View source document <ArrowRight size={15} />
-              </a>
+              <div><span><ShieldCheck size={15} /> Original preserved</span><span><FileSearch size={15} /> {document.noteCount} review notes</span></div>
+              <a className="real-secondary-button" href={document.href} target="_blank" rel="noreferrer">View source document <ArrowRight size={15} /></a>
             </div>
           </article>
         ))}
       </div>
-
-      <section className="real-panel analysis-panel">
-        <div className="real-panel-heading">
-          <div>
-            <span>Complete extraction notes</span>
-            <h2>What requires human confirmation</h2>
-            <p>These are source-quality issues, not additional application data.</p>
-          </div>
-        </div>
-        <div className="analysis-list">
-          {serviceReports.flatMap((report) =>
-            report.transcriptionNotes.map((note, index) => (
-              <article key={`${report.id}-${index}`}>
-                <span>#{report.id}</span>
-                <AlertTriangle size={17} />
-                <p>{note}</p>
-              </article>
-            )),
-          )}
-        </div>
-      </section>
     </>
   );
 }
@@ -632,121 +1443,140 @@ function ReportDetail({
   report,
   onClose,
   onGenerate,
+  onSend,
+  onSignHere,
 }: {
-  report: ServiceReport;
+  report: WorkspaceReport;
   onClose: () => void;
-  onGenerate: (report: ServiceReport) => void;
+  onGenerate: (report: WorkspaceReport) => void;
+  onSend: (report: WorkspaceReport) => void;
+  onSignHere: (report: WorkspaceReport) => void;
 }) {
   const [equipmentIndex, setEquipmentIndex] = useState(0);
   const equipment = report.equipment[equipmentIndex];
-
   return (
     <div className="detail-layer" role="dialog" aria-modal="true" aria-labelledby="detail-title">
       <button className="detail-scrim" aria-label="Close report" onClick={onClose} type="button" />
-      <section className="report-detail">
+      <section className="report-detail operational-detail">
         <header className="detail-header">
-          <div>
-            <button onClick={onClose} type="button"><ArrowLeft size={16} /> Back to reports</button>
-            <span>Service Report / Delivery Order</span>
-            <h2 id="detail-title">Report #{report.id}</h2>
-          </div>
+          <div><button onClick={onClose} type="button"><ArrowLeft size={16} /> Back to reports</button><span>Service Report / Delivery Order</span><h2 id="detail-title">Report #{report.id}</h2></div>
           <button className="detail-close" aria-label="Close" onClick={onClose} type="button"><X size={20} /></button>
         </header>
-
         <div className="detail-actionbar">
-          <span className="real-status"><CheckCircle2 size={13} /> Completed</span>
-          <span className={`real-status ${report.condition === "Follow-up required" ? "follow" : ""}`}>
-            {report.condition === "Follow-up required" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
-            {report.condition}
-          </span>
+          <StatusBadge status={report.status} />
+          <span className={`real-status ${report.condition === "Follow-up required" ? "follow" : ""}`}>{report.condition === "Follow-up required" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{report.condition}</span>
           <span />
-          <a href={report.sourceDocument.href} target="_blank" rel="noreferrer"><Eye size={16} /> Original source</a>
-          <button className="real-primary-button" onClick={() => onGenerate(report)} type="button"><Download size={16} /> Generate PDF</button>
+          {report.sourceDocument && <a href={report.sourceDocument.href} target="_blank" rel="noreferrer"><Eye size={16} /> Original source</a>}
+          {report.status === "Draft" && <button className="action-link-button" onClick={() => onSend(report)} type="button"><Send size={16} /> Send to client</button>}
+          {report.status === "Awaiting client signature" && <button className="action-link-button" onClick={() => onSend(report)} type="button"><Link2 size={16} /> New client link</button>}
+          {report.status === "Awaiting client signature" && <button className="real-primary-button" onClick={() => onSignHere(report)} type="button"><Signature size={16} /> Sign on this device</button>}
+          {report.status === "Completed" && <button className="real-primary-button" onClick={() => onGenerate(report)} type="button"><Download size={16} /> Signed PDF</button>}
         </div>
-
         <div className="detail-scroll">
           <section className="report-identity">
             <div className="identity-mark">P</div>
-            <div>
-              <span>{company.name}</span>
-              <strong>{report.client}</strong>
-              <small><MapPin size={13} /> {report.address}</small>
-            </div>
-            <dl>
-              <div><dt>Report date</dt><dd>{report.date}</dd></div>
-              <div><dt>Service month</dt><dd>{report.serviceMonth}</dd></div>
-              <div><dt>Service type</dt><dd>{report.serviceType}</dd></div>
-            </dl>
+            <div><span>{company.name}</span><strong>{report.client}</strong><small><MapPin size={13} /> {report.address}</small></div>
+            <dl><div><dt>Report date</dt><dd>{report.date}</dd></div><div><dt>Service month</dt><dd>{report.serviceMonth}</dd></div><div><dt>Service type</dt><dd>{report.serviceType}</dd></div></dl>
           </section>
-
-          <section className="detail-section">
-            <span className="detail-section-number">01</span>
-            <div>
-              <h3>Service summary</h3>
-              <p>{report.summary}</p>
-              <ul>{report.workPerformed.map((item) => <li key={item}><Check size={14} /> {item}</li>)}</ul>
-            </div>
-          </section>
-
-          <section className="detail-section equipment-detail-section">
-            <span className="detail-section-number">02</span>
-            <div>
-              <h3>Equipment and checklist</h3>
-              <div className="equipment-tabs">
-                {report.equipment.map((item, index) => (
-                  <button className={index === equipmentIndex ? "active" : ""} key={item.id} onClick={() => setEquipmentIndex(index)} type="button">
-                    {item.name}
-                  </button>
-                ))}
-              </div>
-              <div className="selected-equipment">
-                <div className="selected-equipment-head">
-                  <div><span>{equipment.type}</span><h4>{equipment.name}</h4><p>{equipment.location}</p></div>
-                  {equipment.reviewRequired && <span className="review-chip"><AlertTriangle size={13} /> Review source</span>}
-                </div>
-                <dl>
-                  <div><dt>Brand</dt><dd>{equipment.brand}</dd></div>
-                  <div><dt>Model</dt><dd>{equipment.model}</dd></div>
-                  <div><dt>Serial</dt><dd>{equipment.serial}</dd></div>
-                </dl>
-                <div className="detail-checklist">
-                  {equipment.checklist.map((item) => <span key={item}><Check size={14} /><p>{item}</p><strong>YES</strong></span>)}
-                </div>
-                {!!equipment.measurements.length && (
-                  <div className="detail-measurements">
-                    {equipment.measurements.map((measurement) => (
-                      <span key={measurement.label}><small>{measurement.label}</small><strong>{measurement.value} {measurement.unit}</strong></span>
-                    ))}
-                  </div>
-                )}
-                <div className={`equipment-note ${equipment.note.toLowerCase().includes("chemical") ? "warning" : ""}`}>
-                  {equipment.note.toLowerCase().includes("chemical") ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}
-                  {equipment.note}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="detail-section">
-            <span className="detail-section-number">03</span>
-            <div>
-              <h3>Completion and acknowledgement</h3>
-              <div className="completion-grid">
-                <article><HardHat size={18} /><span>Completed by</span><strong>{report.technicians.join(", ")}</strong></article>
-                <article><ShieldCheck size={18} /><span>Acknowledged by</span><strong>{report.acknowledgement.name}</strong><small>{report.acknowledgement.designation} · {report.acknowledgement.signedDate}</small></article>
-              </div>
-            </div>
-          </section>
-
-          <section className="detail-section review-section">
-            <span className="detail-section-number">04</span>
-            <div>
-              <h3>Source transcription review</h3>
-              {report.transcriptionNotes.map((note) => <p key={note}><AlertTriangle size={15} /> {note}</p>)}
-            </div>
-          </section>
+          <section className="detail-section"><span className="detail-section-number">01</span><div><h3>Service summary</h3><p>{report.summary}</p><ul>{report.workPerformed.map((item) => <li key={item}><Check size={14} /> {item}</li>)}</ul></div></section>
+          <section className="detail-section equipment-detail-section"><span className="detail-section-number">02</span><div><h3>Equipment and checklist</h3><div className="equipment-tabs">{report.equipment.map((item, index) => <button className={index === equipmentIndex ? "active" : ""} key={item.id} onClick={() => setEquipmentIndex(index)} type="button">{item.name}</button>)}</div>{equipment && <div className="selected-equipment"><div className="selected-equipment-head"><div><span>{equipment.type}</span><h4>{equipment.name}</h4><p>{equipment.location}</p></div></div><dl><div><dt>Brand</dt><dd>{equipment.brand}</dd></div><div><dt>Model</dt><dd>{equipment.model}</dd></div><div><dt>Serial</dt><dd>{equipment.serial}</dd></div></dl><div className="detail-checklist">{equipment.checklist.map((item, index) => { const result = equipment.checklistResults?.[index]?.result ?? "YES"; return <span className={result === "NO" ? "failed" : result === "N/A" ? "na" : ""} key={item}><Check size={14} /><p>{item}{equipment.checklistResults?.[index]?.remark && <small>{equipment.checklistResults[index].remark}</small>}</p><strong>{result}</strong></span>; })}</div>{!!equipment.measurements.length && <div className="detail-measurements">{equipment.measurements.map((measurement) => <span key={measurement.label}><small>{measurement.label}</small><strong>{measurement.value || "Not recorded"} {measurement.unit}</strong></span>)}</div>}<div className={`equipment-note ${equipment.note.toLowerCase().includes("chemical") ? "warning" : ""}`}><CheckCircle2 size={17} />{equipment.note}</div></div>}</div></section>
+          <section className="detail-section"><span className="detail-section-number">03</span><div><h3>Completion and acknowledgement</h3><div className="completion-grid"><article><Wrench size={18} /><span>Completed by</span><strong>{report.technicians.join(", ")}</strong></article><article><ShieldCheck size={18} /><span>Customer acknowledgement</span><strong>{report.signature?.signerName ?? "Awaiting client signature"}</strong><small>{report.signature ? `${report.signature.designation} · ${report.acknowledgement.signedDate}` : "Not yet signed"}</small></article></div>{report.signature && <div className="signature-proof"><Signature size={18} /><div><strong>Digitally signed</strong><span>{report.signature.channel === "client_portal" ? "Secure client link" : report.signature.channel === "admin_device" ? "Promach admin device" : "Original source document"} · {new Date(report.signature.signedAt).toLocaleString("en-SG")}</span></div><LockKey /></div>}</div></section>
+          <section className="detail-section audit-section"><span className="detail-section-number">04</span><div><h3>Audit history</h3><div className="audit-list">{report.auditTrail.map((event) => <article key={event.id}><span><History size={15} /></span><div><strong>{event.action}</strong><p>{event.detail}</p><small>{event.actorName} · {event.channel.replaceAll("_", " ")} · {new Date(event.createdAt).toLocaleString("en-SG")}</small></div></article>)}</div></div></section>
         </div>
       </section>
+    </div>
+  );
+}
+
+function LockKey() {
+  return <ShieldCheck size={17} />;
+}
+
+function ShareDialog({
+  state,
+  onClose,
+  onNotice,
+}: {
+  state: { report: WorkspaceReport; url: string };
+  onClose: () => void;
+  onNotice: (message: string) => void;
+}) {
+  async function copy() {
+    await navigator.clipboard.writeText(state.url);
+    onNotice("Secure client link copied.");
+  }
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <button className="modal-scrim" aria-label="Close" onClick={onClose} type="button" />
+      <section className="share-dialog">
+        <span className="dialog-success-icon"><Send size={24} /></span>
+        <span>Report ready for client</span>
+        <h2 id="share-title">Share report #{state.report.id}</h2>
+        <p>This private link opens only this report and lets the client review and sign it. Creating a new link replaces the previous one.</p>
+        <label>Secure signing link<div><input readOnly value={state.url} /><button onClick={copy} type="button"><Copy size={16} /> Copy</button></div></label>
+        <div className="share-recipient"><Building2 size={17} /><div><strong>{state.report.client}</strong><span>{state.report.address}</span></div></div>
+        <footer><button className="real-secondary-button" onClick={onClose} type="button">Done</button><a className="real-primary-button" href={state.url} target="_blank" rel="noreferrer"><Eye size={16} /> Preview client view</a></footer>
+      </section>
+    </div>
+  );
+}
+
+function AdminSignatureDialog({
+  report,
+  onClose,
+  onSigned,
+}: {
+  report: WorkspaceReport;
+  onClose: () => void;
+  onSigned: (workspace: WorkspaceSnapshot) => void;
+}) {
+  const [signerName, setSignerName] = useState("");
+  const [signerEmail, setSignerEmail] = useState("");
+  const [designation, setDesignation] = useState("");
+  const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function sign(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/reports/${report.id}/sign-admin`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ signerName, signerEmail, designation, signatureDataUrl, consent }),
+      });
+      const payload = (await response.json()) as { workspace: WorkspaceSnapshot } | { error: string };
+      if (!response.ok || !("workspace" in payload)) throw new Error("error" in payload ? payload.error : "Unable to sign report");
+      onSigned(payload.workspace);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to sign report");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-layer signature-modal" role="dialog" aria-modal="true" aria-labelledby="admin-sign-title">
+      <button className="modal-scrim" aria-label="Close" onClick={onClose} type="button" />
+      <form className="form-dialog signature-dialog" onSubmit={sign}>
+        <header><div><span>Admin-device signature</span><h2 id="admin-sign-title">Client acknowledgement · Report #{report.id}</h2></div><button aria-label="Close" onClick={onClose} type="button"><X size={19} /></button></header>
+        <div className="dialog-body">
+          <div className="admin-sign-context"><Building2 size={17} /><div><strong>{report.client}</strong><span>{report.address} · {report.date}</span></div><StatusBadge status={report.status} /></div>
+          <p className="admin-sign-note">Hand this device to the client representative. The audit trail will record that the signature was collected on a Promach admin device.</p>
+          <div className="form-grid two">
+            <label>Client representative<input required value={signerName} onChange={(event) => setSignerName(event.target.value)} /></label>
+            <label>Designation<input required value={designation} onChange={(event) => setDesignation(event.target.value)} /></label>
+            <label className="span-two">Email<input required type="email" value={signerEmail} onChange={(event) => setSignerEmail(event.target.value)} /></label>
+          </div>
+          <SignaturePad onChange={setSignatureDataUrl} />
+          <label className="signature-consent"><input checked={consent} onChange={(event) => setConsent(event.target.checked)} type="checkbox" /><span>I confirm that the service work in report #{report.id} has been completed to our satisfaction and I agree to this digital acknowledgement.</span></label>
+          {error && <p className="form-error">{error}</p>}
+        </div>
+        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving || !signatureDataUrl || !consent} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Signature size={16} />}{saving ? "Completing report…" : "Sign and complete report"}</button></footer>
+      </form>
     </div>
   );
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `checklist_templates` ADD `measurements_json` text DEFAULT '[]' NOT NULL;

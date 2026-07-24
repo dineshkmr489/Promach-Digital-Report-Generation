@@ -4,6 +4,12 @@ export type Measurement = {
   unit: string;
 };
 
+export type ChecklistResult = {
+  item: string;
+  result: "YES" | "NO" | "N/A";
+  remark: string;
+};
+
 export type EquipmentService = {
   id: string;
   name: string;
@@ -13,6 +19,7 @@ export type EquipmentService = {
   serial: string;
   location: string;
   checklist: string[];
+  checklistResults?: ChecklistResult[];
   measurements: Measurement[];
   note: string;
   reviewRequired?: boolean;
@@ -25,7 +32,12 @@ export type ServiceReport = {
   date: string;
   serviceMonth: string;
   serviceType: string;
-  status: "Completed";
+  status:
+    | "Draft"
+    | "Awaiting client signature"
+    | "Correction required"
+    | "Completed"
+    | "Cancelled";
   condition: "Running normally" | "Follow-up required";
   summary: string;
   workPerformed: string[];
@@ -39,13 +51,22 @@ export type ServiceReport = {
     source: string;
   };
   equipment: EquipmentService[];
-  sourceDocument: {
+  sourceDocument?: {
     label: string;
     href: string;
     pages: string;
     thumbnail: string;
   };
   transcriptionNotes: string[];
+  signature?: {
+    signerName: string;
+    signerEmail: string;
+    designation: string;
+    signedAt: string;
+    channel: "client_portal" | "admin_device" | "source_document";
+    dataUrl: string | null;
+    consentText: string;
+  } | null;
 };
 
 export const company = {
@@ -298,6 +319,6 @@ export const allEquipment = serviceReports.flatMap((report) =>
 export const sourceDocuments = serviceReports.map((report) => ({
   reportId: report.id,
   client: report.client,
-  ...report.sourceDocument,
+  ...report.sourceDocument!,
   noteCount: report.transcriptionNotes.length,
 }));
