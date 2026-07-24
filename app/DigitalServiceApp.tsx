@@ -36,6 +36,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import Image from "next/image";
 import { useMemo, useState } from "react";
 import type { CompanyProfile } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
@@ -228,7 +229,15 @@ export function DigitalServiceApp({
     <div className="real-app-shell">
       <aside className={`real-sidebar ${menuOpen ? "open" : ""}`}>
         <div className="real-brand">
-          <span className="real-brand-mark">P</span>
+          <span className="real-brand-mark">
+            <Image
+              alt="Promach"
+              height={38}
+              priority
+              src="/brand/promach-logo.png"
+              width={38}
+            />
+          </span>
           <div>
             <strong>PROMACH</strong>
             <small>Digital service reports</small>
@@ -699,6 +708,15 @@ function Reports({
   onCreate: () => void;
   onOpen: (report: WorkspaceReport) => void;
 }) {
+  const [pageSize, setPageSize] = useState(10);
+  const reportKey = reports.map((report) => report.id).join("|");
+  const [pageState, setPageState] = useState({ key: reportKey, page: 1 });
+  const totalPages = Math.max(1, Math.ceil(reports.length / pageSize));
+  const requestedPage = pageState.key === reportKey ? pageState.page : 1;
+  const currentPage = Math.min(requestedPage, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const visibleReports = reports.slice(pageStart, pageStart + pageSize);
+
   const statusCounts = reports.reduce<Record<string, number>>((counts, report) => {
     counts[report.status] = (counts[report.status] ?? 0) + 1;
     return counts;
@@ -728,7 +746,7 @@ function Reports({
           <span>Report</span><span>Client and site</span><span>Service date</span><span>Equipment</span><span>Status</span><span />
         </div>
         <div>
-          {reports.map((report) => (
+          {visibleReports.map((report) => (
             <OperationalReportRow key={report.id} report={report} onOpen={() => onOpen(report)} />
           ))}
           {!reports.length && (
@@ -739,6 +757,18 @@ function Reports({
             </div>
           )}
         </div>
+        <Pagination
+          currentPage={currentPage}
+          itemLabel="reports"
+          onPageChange={(nextPage) => setPageState({ key: reportKey, page: nextPage })}
+          onPageSizeChange={(nextPageSize) => {
+            setPageSize(nextPageSize);
+            setPageState({ key: reportKey, page: 1 });
+          }}
+          pageSize={pageSize}
+          pageSizeOptions={[5, 10, 25]}
+          totalItems={reports.length}
+        />
       </section>
     </>
   );
@@ -1357,39 +1387,141 @@ function MasterList({
   onEdit: (record: MasterRecord) => void;
   onDelete: (record: MasterRecord) => void;
 }) {
+  const [pageSize, setPageSize] = useState(6);
+  const [pageState, setPageState] = useState<{ tab: MasterTab; page: number }>({
+    tab,
+    page: 1,
+  });
   const clientName = (clientId: string) =>
     workspace.clients.find((client) => client.id === clientId)?.name ?? "Unknown client";
   const locationName = (locationId: string) =>
     workspace.locations.find((location) => location.id === locationId)?.name ?? "Unknown site";
+  const totalItems =
+    tab === "checklist-templates"
+      ? workspace.checklistTemplates.length
+      : tab === "service-types"
+        ? workspace.serviceTypes.length
+        : workspace[tab].length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const requestedPage = pageState.tab === tab ? pageState.page : 1;
+  const currentPage = Math.min(requestedPage, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEnd = pageStart + pageSize;
+  const pagination = (
+    <Pagination
+      currentPage={currentPage}
+      itemLabel={masterTabs.find((item) => item.id === tab)?.label.toLowerCase() ?? "records"}
+      onPageChange={(nextPage) => setPageState({ tab, page: nextPage })}
+      onPageSizeChange={(nextPageSize) => {
+        setPageSize(nextPageSize);
+        setPageState({ tab, page: 1 });
+      }}
+      pageSize={pageSize}
+      pageSizeOptions={[6, 12, 24]}
+      totalItems={totalItems}
+    />
+  );
 
   if (tab === "clients") {
-    return <div className="master-card-grid">{workspace.clients.map((item) => (
+    return <><div className="master-card-grid">{workspace.clients.slice(pageStart, pageEnd).map((item) => (
       <article key={item.id}><span className="master-icon"><Building2 size={19} /></span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.contactName || "No contact recorded"}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div><div><dt>Address</dt><dd>{item.address}</dd></div></dl><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
-    ))}</div>;
+    ))}</div>{pagination}</>;
   }
   if (tab === "locations") {
-    return <div className="master-card-grid">{workspace.locations.map((item) => (
+    return <><div className="master-card-grid">{workspace.locations.slice(pageStart, pageEnd).map((item) => (
       <article key={item.id}><span className="master-icon"><MapPin size={19} /></span><StatusPill active={item.active} /><span className="record-owner">{clientName(item.clientId)}</span><h2>{item.name}</h2><p>{item.address}</p><div className="record-meta">{workspace.equipment.filter((equipment) => equipment.locationId === item.id).length} equipment records</div><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
-    ))}</div>;
+    ))}</div>{pagination}</>;
   }
   if (tab === "equipment") {
-    return <div className="master-table"><div className="master-table-head"><span>Equipment</span><span>Client / site</span><span>Identification</span><span>Checklist</span><span>Actions</span></div>{workspace.equipment.map((item) => (
+    return <><div className="master-table"><div className="master-table-head"><span>Equipment</span><span>Client / site</span><span>Identification</span><span>Checklist</span><span>Actions</span></div>{workspace.equipment.slice(pageStart, pageEnd).map((item) => (
       <article key={item.id}><span><i><Gauge size={16} /></i><b>{item.name}</b><small>{item.type} · {item.active ? "Active" : "Inactive"}</small></span><span><b>{clientName(item.clientId)}</b><small>{locationName(item.locationId)}</small></span><span><b>{item.brand} {item.model}</b><small>Serial: {item.serial}</small></span><span><b>{workspace.checklistTemplates.find((template) => template.id === item.checklistTemplateId)?.name ?? "No template"}</b><small>Loaded into new reports</small></span><MasterRecordActions compact name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
-    ))}</div>;
+    ))}</div>{pagination}</>;
   }
   if (tab === "checklist-templates") {
-    return <div className="checklist-master-grid">{workspace.checklistTemplates.map((item) => (
+    return <><div className="checklist-master-grid">{workspace.checklistTemplates.slice(pageStart, pageEnd).map((item) => (
       <article key={item.id}><header><span><ClipboardCheck size={18} /></span><div><strong>{item.name}</strong><small>{item.equipmentType} · {item.active ? "Active" : "Inactive"}</small></div><i>{item.items.length} checks · {item.measurements.length} readings</i></header><ol>{item.items.slice(0, 4).map((check) => <li key={check}>{check}</li>)}</ol>{item.items.length > 4 && <p>+ {item.items.length - 4} more checklist items</p>}<MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
-    ))}</div>;
+    ))}</div>{pagination}</>;
   }
   if (tab === "service-types") {
-    return <div className="master-card-grid service-types">{workspace.serviceTypes.map((item) => (
+    return <><div className="master-card-grid service-types">{workspace.serviceTypes.slice(pageStart, pageEnd).map((item) => (
       <article key={item.id}><span className="master-icon"><Tag size={19} /></span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.description || "No description recorded"}</p><div className="record-meta">Available in report creation</div><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
-    ))}</div>;
+    ))}</div>{pagination}</>;
   }
-  return <div className="master-card-grid technicians">{workspace.technicians.map((item) => (
+  return <><div className="master-card-grid technicians">{workspace.technicians.slice(pageStart, pageEnd).map((item) => (
     <article key={item.id}><span className="master-avatar">{item.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.designation}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div></dl><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
-  ))}</div>;
+  ))}</div>{pagination}</>;
+}
+
+function Pagination({
+  currentPage,
+  itemLabel,
+  onPageChange,
+  onPageSizeChange,
+  pageSize,
+  pageSizeOptions,
+  totalItems,
+}: {
+  currentPage: number;
+  itemLabel: string;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  pageSize: number;
+  pageSizeOptions: number[];
+  totalItems: number;
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const firstItem = totalItems ? (currentPage - 1) * pageSize + 1 : 0;
+  const lastItem = Math.min(currentPage * pageSize, totalItems);
+  const pages = Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  return (
+    <nav className="table-pagination" aria-label={`${itemLabel} pagination`}>
+      <span className="pagination-summary">
+        Showing {firstItem}–{lastItem} of {totalItems} {itemLabel}
+      </span>
+      <label>
+        Items per page
+        <select
+          aria-label={`Items per page for ${itemLabel}`}
+          onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          value={pageSize}
+        >
+          {pageSizeOptions.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      </label>
+      <div className="pagination-controls">
+        <button
+          disabled={currentPage === 1}
+          onClick={() => onPageChange(currentPage - 1)}
+          type="button"
+        >
+          Previous
+        </button>
+        <div className="pagination-pages" aria-label="Page numbers">
+          {pages.map((pageNumber) => (
+            <button
+              aria-current={pageNumber === currentPage ? "page" : undefined}
+              className={pageNumber === currentPage ? "active" : ""}
+              key={pageNumber}
+              onClick={() => onPageChange(pageNumber)}
+              type="button"
+            >
+              {pageNumber}
+            </button>
+          ))}
+        </div>
+        <button
+          disabled={currentPage === totalPages}
+          onClick={() => onPageChange(currentPage + 1)}
+          type="button"
+        >
+          Next
+        </button>
+      </div>
+    </nav>
+  );
 }
 
 function StatusPill({ active }: { active: boolean }) {
@@ -1675,7 +1807,14 @@ function ReportDetail({
         </div>
         <div className="detail-scroll">
           <section className="report-identity">
-            <div className="identity-mark">P</div>
+            <div className="identity-mark">
+              <Image
+                alt="Promach"
+                height={36}
+                src="/brand/promach-logo.png"
+                width={36}
+              />
+            </div>
             <div><span>{company.name}</span><strong>{report.client}</strong><small><MapPin size={13} /> {report.address}</small></div>
             <dl><div><dt>Report date</dt><dd>{report.date}</dd></div><div><dt>Service month</dt><dd>{report.serviceMonth}</dd></div><div><dt>Service type</dt><dd>{report.serviceType}</dd></div></dl>
           </section>

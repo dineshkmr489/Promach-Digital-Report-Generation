@@ -11,6 +11,7 @@ import {
   MapPin,
   ShieldCheck,
 } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { CompanyProfile } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
@@ -132,7 +133,15 @@ export function ClientSigningApp({ token }: { token: string }) {
     <main className="client-portal">
       <header className="client-header">
         <div className="client-brand">
-          <span>P</span>
+          <span>
+            <Image
+              alt="Promach"
+              height={36}
+              priority
+              src="/brand/promach-logo.png"
+              width={36}
+            />
+          </span>
           <div>
             <strong>PROMACH</strong>
             <small>Digital service report</small>
