@@ -7,6 +7,7 @@ import type {
   DigitalSignature,
   EquipmentRecord,
   LocationRecord,
+  ServiceTypeRecord,
   TechnicianRecord,
   WorkspaceReport,
   WorkspaceSnapshot,
@@ -84,6 +85,13 @@ const schemaStatements = [
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
+  `CREATE TABLE IF NOT EXISTS service_types (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
   `CREATE TABLE IF NOT EXISTS service_reports (
     report_no TEXT PRIMARY KEY,
     client_id TEXT NOT NULL,
@@ -139,6 +147,7 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS reports_status_idx ON service_reports(status)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS reports_share_token_idx ON service_reports(share_token_hash) WHERE share_token_hash IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS audit_report_idx ON audit_events(report_no, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS service_types_name_idx ON service_types(name)`,
 ];
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -190,6 +199,7 @@ export async function ensureDatabase(db: D1Database): Promise<void> {
     .first<{ count: number }>();
   if (Number(count?.count ?? 0) > 0) {
     await backfillSeedMeasurements(db);
+    await backfillServiceTypes(db);
     return;
   }
   await seedDatabase(db);
@@ -206,6 +216,22 @@ async function backfillSeedMeasurements(db: D1Database): Promise<void> {
           "UPDATE checklist_templates SET measurements_json = ? WHERE id = ? AND measurements_json = '[]'",
         )
         .bind(JSON.stringify(template.measurements), template.id),
+    ),
+  );
+}
+
+async function backfillServiceTypes(db: D1Database): Promise<void> {
+  const count = await db
+    .prepare("SELECT COUNT(*) AS count FROM service_types")
+    .first<{ count: number }>();
+  if (Number(count?.count ?? 0) > 0) return;
+  await db.batch(
+    createInitialWorkspace().serviceTypes.map((item) =>
+      db
+        .prepare(
+          "INSERT INTO service_types (id, name, description, active) VALUES (?, ?, ?, ?)",
+        )
+        .bind(item.id, item.name, item.description, item.active ? 1 : 0),
     ),
   );
 }
@@ -296,6 +322,15 @@ async function seedDatabase(db: D1Database): Promise<void> {
           item.phone,
           item.active ? 1 : 0,
         ),
+    );
+  }
+  for (const item of workspace.serviceTypes) {
+    statements.push(
+      db
+        .prepare(
+          "INSERT INTO service_types (id, name, description, active) VALUES (?, ?, ?, ?)",
+        )
+        .bind(item.id, item.name, item.description, item.active ? 1 : 0),
     );
   }
   for (const report of workspace.reports) {
@@ -397,6 +432,7 @@ export async function readWorkspace(
     equipmentRows,
     templateRows,
     technicianRows,
+    serviceTypeRows,
     reportRows,
     signatureRows,
     auditRows,
@@ -406,6 +442,7 @@ export async function readWorkspace(
     db.prepare("SELECT * FROM equipment ORDER BY name").all(),
     db.prepare("SELECT * FROM checklist_templates ORDER BY name").all(),
     db.prepare("SELECT * FROM technicians ORDER BY name").all(),
+    db.prepare("SELECT * FROM service_types ORDER BY name").all(),
     db
       .prepare(
         "SELECT * FROM service_reports ORDER BY CAST(report_no AS INTEGER) DESC, created_at DESC",
@@ -480,6 +517,14 @@ export async function readWorkspace(
       designation: text((row as Record<string, unknown>).designation),
       email: text((row as Record<string, unknown>).email),
       phone: text((row as Record<string, unknown>).phone),
+      active: bool((row as Record<string, unknown>).active),
+    }),
+  );
+  const serviceTypes = (serviceTypeRows.results ?? []).map(
+    (row): ServiceTypeRecord => ({
+      id: text((row as Record<string, unknown>).id),
+      name: text((row as Record<string, unknown>).name),
+      description: text((row as Record<string, unknown>).description),
       active: bool((row as Record<string, unknown>).active),
     }),
   );
@@ -589,6 +634,7 @@ export async function readWorkspace(
     equipment,
     checklistTemplates,
     technicians,
+    serviceTypes,
     reports,
   };
 }

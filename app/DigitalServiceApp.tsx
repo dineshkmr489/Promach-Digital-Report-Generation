@@ -14,7 +14,6 @@ import {
   Eye,
   FileCheck2,
   FilePlus2,
-  FileSearch,
   FileText,
   Gauge,
   History,
@@ -29,16 +28,15 @@ import {
   Send,
   ShieldCheck,
   Signature,
-  Sparkles,
+  Tag,
   Trash2,
   UserRound,
   UsersRound,
   Wrench,
   X,
 } from "lucide-react";
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { company, sourceDocuments } from "./reportData";
+import { company } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
 import { SignaturePad } from "./SignaturePad";
 import { createInitialWorkspace } from "./workspaceSeed";
@@ -49,31 +47,27 @@ import type {
   EquipmentRecord,
   LocationRecord,
   MasterEntity,
+  ServiceTypeRecord,
   TechnicianRecord,
   WorkspaceReport,
   WorkspaceSnapshot,
 } from "./workspaceTypes";
 
-type View = "overview" | "reports" | "create" | "master" | "sources";
-type MasterTab =
-  | "clients"
-  | "locations"
-  | "equipment"
-  | "checklist-templates"
-  | "technicians";
+type View = "overview" | "reports" | "create" | "master";
+type MasterTab = MasterEntity;
 type MasterRecord =
   | ClientRecord
   | LocationRecord
   | EquipmentRecord
   | ChecklistTemplateRecord
-  | TechnicianRecord;
+  | TechnicianRecord
+  | ServiceTypeRecord;
 
 const navItems = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
   { id: "reports" as const, label: "Service reports", icon: FileText },
   { id: "create" as const, label: "Create report", icon: FilePlus2 },
   { id: "master" as const, label: "Master data", icon: Building2 },
-  { id: "sources" as const, label: "Source documents", icon: FileSearch },
 ];
 
 const masterTabs = [
@@ -86,7 +80,17 @@ const masterTabs = [
     icon: ClipboardCheck,
   },
   { id: "technicians" as const, label: "Technicians", icon: UsersRound },
+  { id: "service-types" as const, label: "Service Types", icon: Tag },
 ];
+
+function masterSingular(entity: MasterEntity): string {
+  if (entity === "checklist-templates") return "checklist template";
+  if (entity === "service-types") return "service type";
+  if (entity === "equipment") return "equipment";
+  if (entity === "locations") return "site";
+  if (entity === "technicians") return "technician";
+  return "client";
+}
 
 export function DigitalServiceApp({
   adminName,
@@ -96,6 +100,7 @@ export function DigitalServiceApp({
   adminEmail: string;
 }) {
   const [view, setView] = useState<View>("overview");
+  const [masterTab, setMasterTab] = useState<MasterTab>("clients");
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(
     createInitialWorkspace,
   );
@@ -105,7 +110,6 @@ export function DigitalServiceApp({
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [syncError, setSyncError] = useState("");
-  const [refreshing, setRefreshing] = useState(true);
   const [shareState, setShareState] = useState<{
     report: WorkspaceReport;
     url: string;
@@ -136,7 +140,6 @@ export function DigitalServiceApp({
   }, [query, workspace.reports]);
 
   async function refreshWorkspace() {
-    setRefreshing(true);
     try {
       const response = await fetch("/api/workspace", {
         headers: { accept: "application/json" },
@@ -157,8 +160,6 @@ export function DigitalServiceApp({
           ? error.message
           : "The live workspace could not be loaded.",
       );
-    } finally {
-      setRefreshing(false);
     }
   }
 
@@ -230,46 +231,51 @@ export function DigitalServiceApp({
           </div>
         </div>
 
-        <div className="source-status operational">
-          <span className="source-status-icon">
-            <ShieldCheck size={17} />
-          </span>
-          <div>
-            <strong>Operational workspace</strong>
-            <small>
-              {refreshing ? "Syncing…" : "Master data and signatures live"}
-            </small>
-          </div>
-        </div>
-
         <nav aria-label="Primary navigation">
           <span className="nav-overline">Workspace</span>
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <button
-                className={view === item.id ? "active" : ""}
-                key={item.id}
-                onClick={() => navigate(item.id)}
-                type="button"
-              >
-                <Icon size={19} />
-                <span>{item.label}</span>
-                {item.id === "reports" && <i>{workspace.reports.length}</i>}
-                {item.id === "create" && <Plus size={14} />}
-              </button>
+              <div className="sidebar-nav-group" key={item.id}>
+                <button
+                  className={view === item.id ? "active" : ""}
+                  onClick={() => navigate(item.id)}
+                  type="button"
+                >
+                  <Icon size={19} />
+                  <span>{item.label}</span>
+                  {item.id === "reports" && <i>{workspace.reports.length}</i>}
+                  {item.id === "create" && <Plus size={14} />}
+                </button>
+                {item.id === "master" && (
+                  <div className="sidebar-master-links">
+                    {masterTabs.map((master) => {
+                      const MasterIcon = master.icon;
+                      return (
+                        <button
+                          className={
+                            view === "master" && masterTab === master.id
+                              ? "active"
+                              : ""
+                          }
+                          key={master.id}
+                          onClick={() => {
+                            setMasterTab(master.id);
+                            navigate("master");
+                          }}
+                          type="button"
+                        >
+                          <MasterIcon size={15} />
+                          <span>{master.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
-
-        <div className="real-sidebar-note workflow-note">
-          <Sparkles size={18} />
-          <strong>Create once. Sign anywhere.</strong>
-          <p>
-            Build from master data, share one secure report link, or collect the
-            client signature on this device.
-          </p>
-        </div>
 
         <div className="admin-mini">
           <span><UserRound size={15} /></span>
@@ -364,16 +370,17 @@ export function DigitalServiceApp({
           {view === "master" && (
             <MasterData
               workspace={workspace}
+              tab={masterTab}
+              onTabChange={setMasterTab}
               onWorkspaceChange={setWorkspace}
               onNotice={toast}
             />
           )}
-          {view === "sources" && <SourceDocuments />}
         </div>
       </main>
 
       <nav className="real-mobile-nav" aria-label="Mobile navigation">
-        {navItems.slice(0, 4).map((item) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
           return (
             <button
@@ -575,6 +582,7 @@ function Overview({
             <Coverage icon={Gauge} label="Equipment" count={workspace.equipment.length} />
             <Coverage icon={ClipboardCheck} label="Checklists" count={workspace.checklistTemplates.length} />
             <Coverage icon={UsersRound} label="Technicians" count={workspace.technicians.length} />
+            <Coverage icon={Tag} label="Service Types" count={workspace.serviceTypes.length} />
           </div>
           <button className="create-callout" onClick={onCreate} type="button">
             <span><FilePlus2 size={21} /></span>
@@ -717,7 +725,12 @@ function CreateReport({
     clientId: "",
     locationId: "",
     serviceDate: new Date().toISOString().slice(0, 10),
-    serviceType: "Regular service",
+    serviceType:
+      workspace.serviceTypes.find(
+        (item) => item.active && item.name === "Regular Service",
+      )?.name ??
+      workspace.serviceTypes.find((item) => item.active)?.name ??
+      "",
     summary: "",
     workPerformed: [""],
     equipmentIds: [],
@@ -855,8 +868,14 @@ function CreateReport({
 
   function next() {
     setError("");
-    if (step === 1 && (!form.clientId || !form.locationId || !form.serviceDate)) {
-      setError("Select the client, service site, and service date.");
+    if (
+      step === 1 &&
+      (!form.clientId ||
+        !form.locationId ||
+        !form.serviceDate ||
+        !form.serviceType)
+    ) {
+      setError("Select the client, service site, service date, and service type.");
       return;
     }
     if (
@@ -910,7 +929,7 @@ function CreateReport({
       <PageHeading
         eyebrow="Guided report builder"
         title="Create service report"
-        description="The selected master data is copied into the report so the signed version always preserves the exact client, site, equipment, checklist, and technicians used."
+        description="The selected master data is copied into the report so the signed version always preserves the exact client, site, service type, equipment, checklist, and technicians used."
       />
       <div className="create-layout">
         <aside className="create-steps">
@@ -932,7 +951,7 @@ function CreateReport({
           <div className="master-shortcut">
             <Building2 size={18} />
             <strong>Missing a record?</strong>
-            <p>Add a new client, site, equipment item, checklist, or technician first.</p>
+            <p>Add a new client, site, service type, equipment item, checklist, or technician first.</p>
             <button onClick={onManageMaster} type="button">Open master data <ArrowRight size={14} /></button>
           </div>
         </aside>
@@ -978,11 +997,11 @@ function CreateReport({
                 </label>
                 <label>
                   Service type
-                  <select value={form.serviceType} onChange={(event) => update("serviceType", event.target.value)}>
-                    <option>Regular service</option>
-                    <option>Warranty service</option>
-                    <option>Complaint / breakdown</option>
-                    <option>Inspection</option>
+                  <select required value={form.serviceType} onChange={(event) => update("serviceType", event.target.value)}>
+                    <option value="">Select service type</option>
+                    {workspace.serviceTypes.filter((item) => item.active).map((item) => (
+                      <option key={item.id} value={item.name}>{item.name}</option>
+                    ))}
                   </select>
                 </label>
               </div>
@@ -1218,14 +1237,17 @@ function FormSectionHeading({
 
 function MasterData({
   workspace,
+  tab,
+  onTabChange,
   onWorkspaceChange,
   onNotice,
 }: {
   workspace: WorkspaceSnapshot;
+  tab: MasterTab;
+  onTabChange: (tab: MasterTab) => void;
   onWorkspaceChange: (workspace: WorkspaceSnapshot) => void;
   onNotice: (message: string) => void;
 }) {
-  const [tab, setTab] = useState<MasterTab>("clients");
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<MasterRecord | null>(null);
   const [deleting, setDeleting] = useState<MasterRecord | null>(null);
@@ -1245,10 +1267,10 @@ function MasterData({
       <PageHeading
         eyebrow="Reusable operational records"
         title="Master data"
-        description="Create the clients, sites, equipment, service checklists, and technicians used when building reports."
+        description="Create the clients, sites, equipment, service checklists, technicians, and service types used when building reports."
         action={
           <button className="real-primary-button" onClick={() => setAdding(true)} type="button">
-            <Plus size={17} /> Add {masterTabs.find((item) => item.id === tab)?.label.slice(0, -1)}
+            <Plus size={17} /> Add {masterSingular(tab)}
           </button>
         }
       />
@@ -1259,9 +1281,11 @@ function MasterData({
             const count =
               item.id === "checklist-templates"
                 ? workspace.checklistTemplates.length
+                : item.id === "service-types"
+                  ? workspace.serviceTypes.length
                 : workspace[item.id].length;
             return (
-              <button className={tab === item.id ? "active" : ""} key={item.id} onClick={() => setTab(item.id)} type="button">
+              <button className={tab === item.id ? "active" : ""} key={item.id} onClick={() => onTabChange(item.id)} type="button">
                 <Icon size={17} /><span>{item.label}</span><i>{count}</i>
               </button>
             );
@@ -1345,6 +1369,11 @@ function MasterList({
       <article key={item.id}><header><span><ClipboardCheck size={18} /></span><div><strong>{item.name}</strong><small>{item.equipmentType} · {item.active ? "Active" : "Inactive"}</small></div><i>{item.items.length} checks · {item.measurements.length} readings</i></header><ol>{item.items.slice(0, 4).map((check) => <li key={check}>{check}</li>)}</ol>{item.items.length > 4 && <p>+ {item.items.length - 4} more checklist items</p>}<MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
     ))}</div>;
   }
+  if (tab === "service-types") {
+    return <div className="master-card-grid service-types">{workspace.serviceTypes.map((item) => (
+      <article key={item.id}><span className="master-icon"><Tag size={19} /></span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.description || "No description recorded"}</p><div className="record-meta">Available in report creation</div><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
+    ))}</div>;
+  }
   return <div className="master-card-grid technicians">{workspace.technicians.map((item) => (
     <article key={item.id}><span className="master-avatar">{item.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><StatusPill active={item.active} /><h2>{item.name}</h2><p>{item.designation}</p><dl><div><dt>Email</dt><dd>{item.email || "Not recorded"}</dd></div><div><dt>Phone</dt><dd>{item.phone || "Not recorded"}</dd></div></dl><MasterRecordActions name={item.name} onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} /></article>
   ))}</div>;
@@ -1426,16 +1455,12 @@ function MasterDataDialog({
       initial.email = record.email;
       initial.phone = record.phone;
     }
+    if ("description" in record) initial.description = record.description;
     return initial;
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const singular =
-    entity === "checklist-templates"
-      ? "checklist template"
-      : entity === "equipment"
-        ? "equipment"
-        : entity.slice(0, -1);
+  const singular = masterSingular(entity);
 
   function field(name: string, value: string) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -1510,7 +1535,7 @@ function MasterDataDialog({
           {entity === "equipment" && (
             <label>Service site<select required value={form.locationId ?? ""} onChange={(event) => field("locationId", event.target.value)}><option value="">Select site</option>{selectedClientLocations.map((item) => <option key={item.id} value={item.id}>{item.name}{item.active ? "" : " (Inactive)"}</option>)}</select></label>
           )}
-          <label>{entity === "clients" ? "Client name" : entity === "locations" ? "Site name" : entity === "equipment" ? "Equipment name / tag" : entity === "checklist-templates" ? "Template name" : "Technician name"}<input required value={form.name ?? ""} onChange={(event) => field("name", event.target.value)} /></label>
+          <label>{entity === "clients" ? "Client name" : entity === "locations" ? "Site name" : entity === "equipment" ? "Equipment name / tag" : entity === "checklist-templates" ? "Template name" : entity === "service-types" ? "Service type name" : "Technician name"}<input required value={form.name ?? ""} onChange={(event) => field("name", event.target.value)} /></label>
           {entity === "clients" && <>
             <label>Primary contact<input value={form.contactName ?? ""} onChange={(event) => field("contactName", event.target.value)} /></label>
             <div className="form-grid two"><label>Email<input type="email" value={form.email ?? ""} onChange={(event) => field("email", event.target.value)} /></label><label>Phone<input value={form.phone ?? ""} onChange={(event) => field("phone", event.target.value)} /></label></div>
@@ -1531,6 +1556,9 @@ function MasterDataDialog({
             <label>Designation<input required value={form.designation ?? "Service Technician"} onChange={(event) => field("designation", event.target.value)} /></label>
             <div className="form-grid two"><label>Email<input type="email" value={form.email ?? ""} onChange={(event) => field("email", event.target.value)} /></label><label>Phone<input value={form.phone ?? ""} onChange={(event) => field("phone", event.target.value)} /></label></div>
           </>}
+          {entity === "service-types" && (
+            <label>Description<textarea rows={3} value={form.description ?? ""} onChange={(event) => field("description", event.target.value)} placeholder="Where this service type should be used" /></label>
+          )}
           {error && <p className="form-error">{error}</p>}
         </div>
         <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{saving ? "Saving…" : record ? `Update ${singular}` : `Save ${singular}`}</button></footer>
@@ -1594,35 +1622,6 @@ function DeleteMasterDialog({
         </footer>
       </section>
     </div>
-  );
-}
-
-function SourceDocuments() {
-  return (
-    <>
-      <PageHeading
-        eyebrow="Original supplied evidence"
-        title="Source documents"
-        description="The two imported reports remain available as reference records alongside reports created digitally."
-      />
-      <div className="source-grid">
-        {sourceDocuments.map((document) => (
-          <article className="real-panel source-card" key={document.reportId}>
-            <a href={document.href} target="_blank" rel="noreferrer">
-              <Image src={document.thumbnail} alt={`${document.client} original service report`} fill sizes="(max-width: 700px) 115px, 210px" unoptimized />
-              <span className="source-open"><Eye size={16} /> Open original</span>
-            </a>
-            <div className="source-card-body">
-              <span className="source-file-type"><FileSearch size={15} /> {document.pages}</span>
-              <h2>{document.client}</h2>
-              <p>Service Report / Delivery Order #{document.reportId}</p>
-              <div><span><ShieldCheck size={15} /> Original preserved</span><span><FileSearch size={15} /> {document.noteCount} review notes</span></div>
-              <a className="real-secondary-button" href={document.href} target="_blank" rel="noreferrer">View source document <ArrowRight size={15} /></a>
-            </div>
-          </article>
-        ))}
-      </div>
-    </>
   );
 }
 

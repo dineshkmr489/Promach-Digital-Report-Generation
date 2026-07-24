@@ -57,6 +57,18 @@ export const technicians = sqliteTable("technicians", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const serviceTypes = sqliteTable(
+  "service_types",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    active: integer("active").notNull().default(1),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [uniqueIndex("service_types_name_idx").on(table.name)],
+);
+
 export const serviceReports = sqliteTable(
   "service_reports",
   {

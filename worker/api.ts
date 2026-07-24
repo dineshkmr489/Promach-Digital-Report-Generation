@@ -5,6 +5,7 @@ import type {
   EquipmentRecord,
   LocationRecord,
   MasterEntity,
+  ServiceTypeRecord,
   TechnicianRecord,
   WorkspaceReport,
 } from "../app/workspaceTypes";
@@ -331,6 +332,29 @@ async function createMasterRecord(
     return;
   }
 
+  if (entity === "service-types") {
+    const item: ServiceTypeRecord = {
+      id: newId("service-type"),
+      name: required(payload.name, "Service type name"),
+      description: optional(payload.description, 500),
+      active: true,
+    };
+    const existing = await db
+      .prepare("SELECT id FROM service_types WHERE LOWER(name) = LOWER(?)")
+      .bind(item.name)
+      .first();
+    if (existing) {
+      throw new Error("A service type with this name already exists.");
+    }
+    await db
+      .prepare(
+        "INSERT INTO service_types (id, name, description, active) VALUES (?, ?, ?, 1)",
+      )
+      .bind(item.id, item.name, item.description)
+      .run();
+    return;
+  }
+
   throw new Error("Unknown master-data section.");
 }
 
@@ -503,6 +527,31 @@ async function updateMasterRecord(
     return;
   }
 
+  if (entity === "service-types") {
+    const existing = await db
+      .prepare("SELECT id FROM service_types WHERE id = ?")
+      .bind(recordId)
+      .first();
+    if (!existing) throw new ApiRequestError("Service type not found.", 404);
+    const name = required(payload.name, "Service type name");
+    const duplicate = await db
+      .prepare(
+        "SELECT id FROM service_types WHERE LOWER(name) = LOWER(?) AND id <> ?",
+      )
+      .bind(name, recordId)
+      .first();
+    if (duplicate) {
+      throw new Error("A service type with this name already exists.");
+    }
+    await db
+      .prepare(
+        "UPDATE service_types SET name = ?, description = ?, active = ? WHERE id = ?",
+      )
+      .bind(name, optional(payload.description, 500), active, recordId)
+      .run();
+    return;
+  }
+
   throw new ApiRequestError("Unknown master-data section.", 404);
 }
 
@@ -608,6 +657,14 @@ async function deleteMasterRecord(
     return;
   }
 
+  if (entity === "service-types") {
+    await db
+      .prepare("DELETE FROM service_types WHERE id = ?")
+      .bind(recordId)
+      .run();
+    return;
+  }
+
   throw new ApiRequestError("Unknown master-data section.", 404);
 }
 
@@ -645,6 +702,10 @@ async function createReport(
   }
 
   const workspace = await readWorkspace(db);
+  const selectedServiceType = workspace.serviceTypes.find(
+    (item) => item.name === serviceType && item.active,
+  );
+  if (!selectedServiceType) throw new Error("Select an active service type.");
   const client = workspace.clients.find(
     (item) => item.id === clientId && item.active,
   );
@@ -745,7 +806,7 @@ async function createReport(
         location.address,
         serviceDate,
         monthLabel(serviceDate),
-        serviceType,
+        selectedServiceType.name,
         condition,
         summary,
         JSON.stringify(workPerformed),

@@ -76,23 +76,9 @@ a { color: inherit; text-decoration: none; }
 .real-brand strong { display: block; font-size: 16px; letter-spacing: 0.02em; }
 .real-brand small { display: block; margin-top: 1px; color: rgba(255,255,255,.48); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 
-.source-status {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 27px;
-  border: 1px solid rgba(217,242,95,.19);
-  border-radius: 11px;
-  padding: 10px;
-  background: rgba(217,242,95,.07);
-}
-.source-status-icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; background: rgba(217,242,95,.13); color: var(--lime); }
-.source-status strong, .source-status small { display: block; }
-.source-status strong { font-size: 10.5px; }
-.source-status small { margin-top: 3px; color: rgba(255,255,255,.45); font-size: 8.5px; }
-
-.real-sidebar nav { display: grid; gap: 4px; margin-top: 25px; }
+.real-sidebar nav { display: grid; gap: 4px; margin-top: 30px; }
 .nav-overline { margin: 0 10px 5px; color: rgba(255,255,255,.34); font: 800 9px var(--font-display), sans-serif; letter-spacing: .13em; text-transform: uppercase; }
+.sidebar-nav-group { display: grid; gap: 3px; }
 .real-sidebar nav button {
   display: flex;
   min-height: 43px;
@@ -112,17 +98,9 @@ a { color: inherit; text-decoration: none; }
 .real-sidebar nav button i { display: grid; min-width: 22px; height: 19px; place-items: center; margin-left: auto; border-radius: 8px; background: rgba(255,255,255,.12); font-size: 8px; font-style: normal; }
 .real-sidebar nav button.active i { background: rgba(18,56,46,.12); }
 
-.real-sidebar-note {
-  display: grid;
-  margin-top: auto;
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 12px;
-  padding: 15px;
-  background: rgba(255,255,255,.05);
-}
-.real-sidebar-note > svg { color: var(--lime); }
-.real-sidebar-note strong { margin-top: 9px; font-size: 10.5px; }
-.real-sidebar-note p { margin-top: 5px; color: rgba(255,255,255,.45); font-size: 9px; line-height: 1.5; }
+.sidebar-master-links { display: grid; gap: 2px; margin: 1px 0 5px 19px; border-left: 1px solid rgba(255,255,255,.12); padding-left: 8px; }
+.real-sidebar nav .sidebar-master-links button { min-height: 32px; gap: 8px; padding: 0 9px; border-radius: 7px; color: rgba(255,255,255,.48); font-size: 9.5px; }
+.real-sidebar nav .sidebar-master-links button.active { background: rgba(217,242,95,.12); color: var(--lime); }
 .company-mini { display: grid; gap: 3px; margin-top: 15px; border-top: 1px solid rgba(255,255,255,.08); padding: 13px 8px 0; }
 .company-mini strong { font-size: 9px; }
 .company-mini span { color: rgba(255,255,255,.36); font-size: 7.5px; }
@@ -464,9 +442,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* Operational report workflow */
-.source-status.operational { border-color: rgba(217,242,95,.25); background: rgba(217,242,95,.09); }
-.workflow-note { margin-top: auto; }
-.admin-mini { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; margin-top: 14px; border-top: 1px solid rgba(255,255,255,.08); padding: 14px 6px 0; }
+.admin-mini { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; margin-top: auto; border-top: 1px solid rgba(255,255,255,.08); padding: 14px 6px 0; }
 .admin-mini > span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--lime); }
 .admin-mini strong, .admin-mini small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-mini strong { font-size: 8.5px; }
@@ -794,7 +770,7 @@ a { color: inherit; text-decoration: none; }
   .create-steps { grid-template-columns: repeat(3,1fr); }
   .create-steps > button { grid-template-columns: auto 1fr; }
   .master-shortcut { grid-column: span 3; }
-  .master-tabs { grid-template-columns: repeat(5,1fr); overflow-x: auto; }
+  .master-tabs { grid-template-columns: repeat(6,1fr); overflow-x: auto; }
   .master-tabs button { min-width: 120px; }
 }
 

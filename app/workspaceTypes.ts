@@ -22,7 +22,8 @@ export type MasterEntity =
   | "locations"
   | "equipment"
   | "checklist-templates"
-  | "technicians";
+  | "technicians"
+  | "service-types";
 
 export type ClientRecord = {
   id: string;
@@ -73,6 +74,13 @@ export type TechnicianRecord = {
   active: boolean;
 };
 
+export type ServiceTypeRecord = {
+  id: string;
+  name: string;
+  description: string;
+  active: boolean;
+};
+
 export type DigitalSignature = {
   signerName: string;
   signerEmail: string;
@@ -110,6 +118,7 @@ export type WorkspaceSnapshot = {
   equipment: EquipmentRecord[];
   checklistTemplates: ChecklistTemplateRecord[];
   technicians: TechnicianRecord[];
+  serviceTypes: ServiceTypeRecord[];
   reports: WorkspaceReport[];
 };
 

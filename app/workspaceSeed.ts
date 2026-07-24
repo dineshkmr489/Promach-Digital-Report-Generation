@@ -5,6 +5,7 @@ import type {
   ClientRecord,
   EquipmentRecord,
   LocationRecord,
+  ServiceTypeRecord,
   TechnicianRecord,
   WorkspaceReport,
   WorkspaceSnapshot,
@@ -130,6 +131,27 @@ const technicians: TechnicianRecord[] = technicianSeed.map(([id, name]) => ({
   active: true,
 }));
 
+const serviceTypes: ServiceTypeRecord[] = [
+  {
+    id: "service-type-regular",
+    name: "Regular Service",
+    description: "Planned or recurring service visit.",
+    active: true,
+  },
+  {
+    id: "service-type-warranty",
+    name: "Warranty Service",
+    description: "Service work performed under warranty.",
+    active: true,
+  },
+  {
+    id: "service-type-complaints",
+    name: "Complaints",
+    description: "Customer complaint or breakdown attendance.",
+    active: true,
+  },
+];
+
 function technicianId(name: string): string {
   return (
     technicianSeed.find(([, technicianName]) => technicianName === name)?.[0] ??
@@ -208,6 +230,7 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
       })),
     })),
     technicians: technicians.map((item) => ({ ...item })),
+    serviceTypes: serviceTypes.map((item) => ({ ...item })),
     reports: reports.map((report) => ({
       ...report,
       equipment: report.equipment.map((item) => ({
