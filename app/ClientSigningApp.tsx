@@ -154,7 +154,7 @@ export function ClientSigningApp({ token }: { token: string }) {
             </div>
             <button
               className="real-primary-button"
-              onClick={() => downloadServiceReportPdf(report)}
+              onClick={() => void downloadServiceReportPdf(report)}
               type="button"
             >
               <Download size={17} />

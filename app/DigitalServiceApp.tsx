@@ -160,9 +160,13 @@ export function DigitalServiceApp({
     window.setTimeout(() => setNotice(""), 3600);
   }
 
-  function generatePdf(report: WorkspaceReport) {
-    downloadServiceReportPdf(report);
-    toast(`Report ${report.id} PDF generated.`);
+  async function generatePdf(report: WorkspaceReport) {
+    try {
+      await downloadServiceReportPdf(report);
+      toast(`Report ${report.id} PDF generated.`);
+    } catch {
+      toast(`Report ${report.id} PDF could not be generated.`);
+    }
   }
 
   async function sendReport(report: WorkspaceReport) {

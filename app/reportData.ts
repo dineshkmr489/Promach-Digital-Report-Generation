@@ -72,7 +72,7 @@ export type ServiceReport = {
 export const company = {
   name: "PROMACH PTE. LTD.",
   address:
-    "8 Temasek Boulevard, Level 42, Suntec Tower Three, Singapore 038988",
+    "8 Temasek Boulevard Level 42, Suntec Tower Three, Singapore-038988",
   phone: "6829 2136",
   email: "enquiry@promachpl.com",
   website: "www.promachpl.com",
