@@ -241,6 +241,7 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
           ...measurement,
         })),
       })),
+      images: (report.images ?? []).map((image) => ({ ...image })),
       workPerformed: [...report.workPerformed],
       technicians: [...report.technicians],
       technicianIds: [...report.technicianIds],

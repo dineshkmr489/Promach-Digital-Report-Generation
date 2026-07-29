@@ -13,7 +13,9 @@ All operational data is persisted in MongoDB:
 - checklist templates and measurement definitions
 - technicians
 - service types
-- service reports, secure-link state, signatures, and audit trails
+- service reports, compressed service images, secure-link state, signatures,
+  and audit trails
+- user profiles, roles, and salted password hashes
 
 The application no longer contains Cloudflare Workers, D1, Vinext, or OpenAI
 Sites deployment configuration.
@@ -50,6 +52,18 @@ Open `http://localhost:3000` and enter the configured administrator username
 and password. The seed is idempotent: it creates the initial operational
 records only when they do not already exist, so it does not overwrite later
 master-data or report changes.
+
+The `ADMIN_*` values create the first database-backed Administrator account
+when the users collection is empty. Further accounts are managed inside the
+application:
+
+- **Administrator** — complete access, including users and roles
+- **Operations Manager** — master data and complete report workflow
+- **Service Technician** — report creation and processing
+- **Viewer** — read-only dashboard and report access
+
+Passwords are stored as salted scrypt hashes and are never returned to the
+browser.
 
 ## Verification
 

@@ -46,6 +46,8 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
         ...process.env,
         ADMIN_USERNAME: testUsername,
         ADMIN_PASSWORD: testPassword,
+        ADMIN_EMAIL: "test-admin@promach.local",
+        MONGODB_DB: `${process.env.MONGODB_DB || "report_gen"}_automated_test`,
         HOSTNAME: "127.0.0.1",
         PORT: String(port),
       },
@@ -121,10 +123,100 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
   assert.match(html, /Tuas Power Generation/i);
   assert.match(html, /Create report/i);
   assert.match(html, /Master data/i);
+  assert.match(html, /Users and roles/i);
+  assert.match(html, /My profile/i);
+  assert.match(html, /Administrator/i);
   assert.doesNotMatch(html, /Operational workspace/i);
   assert.doesNotMatch(html, /Create one\. Sign anywhere\./i);
   assert.doesNotMatch(html, /Source documents/i);
   assert.doesNotMatch(html, /Retry sync/i);
+
+  const usersResponse = await fetch(`${baseUrl}/api/users`, {
+    headers: { cookie: sessionCookie },
+  });
+  assert.equal(usersResponse.status, 200);
+  const usersPayload = await usersResponse.json();
+  assert.ok(
+    usersPayload.users.some((user) => user.username === testUsername),
+    "bootstrap administrator should be available through user management",
+  );
+
+  const createdUserResponse = await fetch(`${baseUrl}/api/users`, {
+    method: "POST",
+    headers: {
+      cookie: sessionCookie,
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      username: "test-viewer",
+      password: "test-viewer-password",
+      name: "Test Viewer",
+      email: "test-viewer@promach.local",
+      phone: "",
+      designation: "Report Viewer",
+      role: "Viewer",
+      active: true,
+    }),
+  });
+  assert.equal(createdUserResponse.status, 201);
+  const createdUserPayload = await createdUserResponse.json();
+  const createdUser = createdUserPayload.users.find(
+    (user) => user.username === "test-viewer",
+  );
+  assert.ok(createdUser);
+
+  const viewerLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      username: "test-viewer",
+      password: "test-viewer-password",
+    }),
+  });
+  assert.equal(viewerLogin.status, 200);
+  const viewerCookie = (viewerLogin.headers.get("set-cookie") ?? "").split(";")[0];
+  const forbiddenReport = await fetch(`${baseUrl}/api/reports`, {
+    method: "POST",
+    headers: {
+      cookie: viewerCookie,
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: "{}",
+  });
+  assert.equal(forbiddenReport.status, 403);
+
+  const profileUpdate = await fetch(`${baseUrl}/api/profile`, {
+    method: "PUT",
+    headers: {
+      cookie: viewerCookie,
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      name: "Test Viewer Updated",
+      email: "test-viewer@promach.local",
+      phone: "+65 6000 0000",
+      designation: "Authorised Report Viewer",
+    }),
+  });
+  assert.equal(profileUpdate.status, 200);
+
+  const deleteUserResponse = await fetch(
+    `${baseUrl}/api/users/${encodeURIComponent(createdUser.id)}`,
+    {
+      method: "DELETE",
+      headers: {
+        cookie: sessionCookie,
+        origin: baseUrl,
+      },
+    },
+  );
+  assert.equal(deleteUserResponse.status, 200);
 
   const logout = await fetch(`${baseUrl}/api/auth/logout`, {
     method: "POST",

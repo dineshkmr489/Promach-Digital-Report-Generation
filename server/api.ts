@@ -5,8 +5,12 @@ import type {
   EquipmentRecord,
   LocationRecord,
   MasterEntity,
+  ProfileMutationPayload,
   ServiceTypeRecord,
   TechnicianRecord,
+  UserMutationPayload,
+  UserRecord,
+  UserRole,
   WorkspaceReport,
 } from "../app/workspaceTypes.ts";
 import {
@@ -14,26 +18,36 @@ import {
   adminSessionCookie,
   clearAdminSessionCookie,
   createAdminSessionToken,
-  verifyAdminCredentials,
 } from "./adminAuth.ts";
 import {
+  authenticateUser,
   completeReportSignature,
   ensureDatabase,
   findMasterRecord,
   findReport,
   findReportByShareHash,
+  findUser,
   insertMasterRecord,
   insertReport,
+  insertUser,
   issueReportShareLink,
   nextReportNumber,
   readWorkspace,
+  readUsers,
   removeMasterRecord,
+  removeUser,
   replaceMasterRecord,
+  replaceUser,
   serviceTypeNameExists,
+  updateUserProfile,
+  userLoginExists,
   type MasterRecord,
 } from "./database.ts";
 
 const SIGNATURE_LIMIT = 700_000;
+const REPORT_IMAGE_LIMIT = 6;
+const REPORT_IMAGE_BYTES_LIMIT = 900_000;
+const REPORT_IMAGES_TOTAL_BYTES_LIMIT = 5_000_000;
 const CONSENT_TEXT =
   "I confirm that the service work described in this report has been completed to our satisfaction and I agree to use this digital signature as my acknowledgement.";
 const masterEntities = new Set<MasterEntity>([
@@ -46,6 +60,12 @@ const masterEntities = new Set<MasterEntity>([
 ]);
 const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
 const LOGIN_ATTEMPT_LIMIT = 8;
+const userRoles = new Set<UserRole>([
+  "Administrator",
+  "Operations Manager",
+  "Service Technician",
+  "Viewer",
+]);
 
 type LoginAttempt = {
   failures: number;
@@ -120,6 +140,18 @@ function apiError(message: string, status = 400): Response {
   return responseJson({ error: message }, status);
 }
 
+function forbidden(message = "You do not have permission for this action.") {
+  return apiError(message, 403);
+}
+
+function normalizedEmail(value: unknown): string {
+  const email = required(value, "Email", 180).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new ApiRequestError("Enter a valid email address.", 400);
+  }
+  return email;
+}
+
 function sameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return true;
@@ -147,6 +179,54 @@ async function jsonBody<T>(request: Request): Promise<T | null> {
     return (await request.json()) as T;
   } catch {
     return null;
+  }
+}
+
+function userRole(value: unknown): UserRole {
+  if (typeof value !== "string" || !userRoles.has(value as UserRole)) {
+    throw new ApiRequestError("Select a valid user role.", 400);
+  }
+  return value as UserRole;
+}
+
+function userMutation(
+  payload: Record<string, unknown>,
+  existing?: UserRecord,
+): UserMutationPayload {
+  const username = required(payload.username, "Username", 80).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{2,79}$/.test(username)) {
+    throw new ApiRequestError(
+      "Username must contain 3–80 letters, numbers, dots, underscores, or hyphens.",
+      400,
+    );
+  }
+  return {
+    username,
+    name: required(payload.name, "Full name", 120),
+    email: normalizedEmail(payload.email),
+    phone: optional(payload.phone, 40),
+    designation: required(payload.designation, "Designation", 120),
+    role: userRole(payload.role),
+    active:
+      typeof payload.active === "boolean"
+        ? payload.active
+        : existing?.active ?? true,
+    password:
+      typeof payload.password === "string" && payload.password
+        ? payload.password
+        : undefined,
+  };
+}
+
+function requireStrongPassword(password: string | undefined, creating = false) {
+  if (creating && !password) {
+    throw new ApiRequestError("Enter a temporary password.", 400);
+  }
+  if (password && password.length < 12) {
+    throw new ApiRequestError(
+      "Passwords must contain at least 12 characters.",
+      400,
+    );
   }
 }
 
@@ -218,6 +298,57 @@ function validSignature(value: unknown): value is string {
     value.length <= SIGNATURE_LIMIT &&
     /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(value)
   );
+}
+
+function imageDataBytes(dataUrl: string): number {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function reportImages(
+  payload: CreateReportPayload,
+  equipmentIds: string[],
+) {
+  const submitted = Array.isArray(payload.images) ? payload.images : [];
+  if (submitted.length > REPORT_IMAGE_LIMIT) {
+    throw new Error(`Add no more than ${REPORT_IMAGE_LIMIT} service images.`);
+  }
+
+  let totalBytes = 0;
+  const images = submitted.map((raw) => {
+    const dataUrl = typeof raw?.dataUrl === "string" ? raw.dataUrl : "";
+    if (
+      !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)
+    ) {
+      throw new Error("One or more service images has an unsupported format.");
+    }
+    const sizeBytes = imageDataBytes(dataUrl);
+    if (!sizeBytes || sizeBytes > REPORT_IMAGE_BYTES_LIMIT) {
+      throw new Error(
+        "Each service image must be compressed to 900 KB or less.",
+      );
+    }
+    totalBytes += sizeBytes;
+    const equipmentId =
+      typeof raw.equipmentId === "string" &&
+      equipmentIds.includes(raw.equipmentId)
+        ? raw.equipmentId
+        : null;
+    return {
+      id: newId("image"),
+      name: optional(raw.name, 240) || "Service image",
+      caption: optional(raw.caption, 240),
+      equipmentId,
+      dataUrl,
+      sizeBytes,
+    };
+  });
+
+  if (totalBytes > REPORT_IMAGES_TOTAL_BYTES_LIMIT) {
+    throw new Error("The combined service images must be 5 MB or less.");
+  }
+  return images;
 }
 
 function masterEntity(value: string | undefined): MasterEntity {
@@ -547,6 +678,7 @@ async function createReport(
   const technicianIds = Array.isArray(payload.technicianIds)
     ? [...new Set(payload.technicianIds.map(String))]
     : [];
+  const images = reportImages(payload, equipmentIds);
 
   if (!workPerformed.length) throw new Error("Add at least one work item.");
   if (!equipmentIds.length) throw new Error("Select at least one equipment item.");
@@ -646,6 +778,7 @@ async function createReport(
     summary,
     workPerformed,
     equipment: equipmentSnapshots,
+    images,
     technicianIds,
     technicians: (technicians as TechnicianRecord[]).map((item) => item.name),
     remarks: remarks || "No additional remarks.",
@@ -784,18 +917,26 @@ export async function handleApiRequest(request: Request): Promise<Response> {
         typeof payload.username === "string" ? payload.username.trim() : "";
       const password =
         typeof payload.password === "string" ? payload.password : "";
-      if (!verifyAdminCredentials(username, password)) {
+      await ensureDatabase();
+      const authenticated = await authenticateUser(username, password);
+      if (!authenticated) {
         recordLoginFailure(clientKey);
         return apiError("The username or password is incorrect.", 401);
       }
       loginAttempts().delete(clientKey);
       return responseJson(
-        { ok: true },
+        { ok: true, user: authenticated },
         200,
         {
           "set-cookie": adminSessionCookie(
             request,
-            createAdminSessionToken(),
+            createAdminSessionToken({
+              id: authenticated.id,
+              username: authenticated.username,
+              name: authenticated.name,
+              email: authenticated.email,
+              role: authenticated.role,
+            }),
           ),
         },
       );
@@ -850,8 +991,225 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       return responseJson({ report: await findReport(report.id) });
     }
 
-    const admin = adminIdentity(request);
-    if (!admin) return apiError("Promach administrator authentication required.", 401);
+    const sessionAdmin = adminIdentity(request);
+    if (!sessionAdmin) {
+      return apiError("Promach user authentication required.", 401);
+    }
+    const admin = await findUser(sessionAdmin.id);
+    if (!admin?.active) {
+      return apiError("Your user account is inactive or no longer available.", 401);
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/auth/me") {
+      return responseJson({ user: admin });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/users") {
+      if (admin.role !== "Administrator") return forbidden();
+      return responseJson({ users: await readUsers() });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/users") {
+      if (admin.role !== "Administrator") return forbidden();
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const payload = await jsonBody<Record<string, unknown>>(request);
+      if (!payload) return apiError("A JSON request body is required.", 415);
+      const values = userMutation(payload);
+      requireStrongPassword(values.password, true);
+      const conflict = await userLoginExists(values.username, values.email);
+      if (conflict) {
+        throw new ApiRequestError(
+          conflict === "username"
+            ? "That username is already in use."
+            : "That email address is already in use.",
+          409,
+        );
+      }
+      const now = new Date().toISOString();
+      await insertUser(
+        {
+          id: newId("user"),
+          username: values.username,
+          name: values.name,
+          email: values.email,
+          phone: values.phone,
+          designation: values.designation,
+          role: values.role,
+          active: values.active,
+          createdAt: now,
+          updatedAt: now,
+        },
+        values.password!,
+      );
+      return responseJson({ users: await readUsers() }, 201);
+    }
+
+    if (
+      request.method === "PUT" &&
+      segments[1] === "users" &&
+      segments.length === 3
+    ) {
+      if (admin.role !== "Administrator") return forbidden();
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const userId = decodeURIComponent(segments[2]);
+      const existing = await findUser(userId);
+      if (!existing) throw new ApiRequestError("User not found.", 404);
+      if (userId === admin.id) {
+        throw new ApiRequestError(
+          "Use My profile to update your own account.",
+          409,
+        );
+      }
+      const payload = await jsonBody<Record<string, unknown>>(request);
+      if (!payload) return apiError("A JSON request body is required.", 415);
+      const values = userMutation(payload, existing);
+      requireStrongPassword(values.password);
+      const users = await readUsers();
+      const activeAdministrators = users.filter(
+        (user) => user.active && user.role === "Administrator",
+      ).length;
+      if (
+        existing.active &&
+        existing.role === "Administrator" &&
+        (!values.active || values.role !== "Administrator") &&
+        activeAdministrators <= 1
+      ) {
+        throw new ApiRequestError(
+          "Keep at least one active administrator account.",
+          409,
+        );
+      }
+      const conflict = await userLoginExists(
+        values.username,
+        values.email,
+        userId,
+      );
+      if (conflict) {
+        throw new ApiRequestError(
+          conflict === "username"
+            ? "That username is already in use."
+            : "That email address is already in use.",
+          409,
+        );
+      }
+      await replaceUser(
+        userId,
+        {
+          ...existing,
+          username: values.username,
+          name: values.name,
+          email: values.email,
+          phone: values.phone,
+          designation: values.designation,
+          role: values.role,
+          active: values.active,
+          updatedAt: new Date().toISOString(),
+        },
+        values.password,
+      );
+      return responseJson({ users: await readUsers() });
+    }
+
+    if (
+      request.method === "DELETE" &&
+      segments[1] === "users" &&
+      segments.length === 3
+    ) {
+      if (admin.role !== "Administrator") return forbidden();
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const userId = decodeURIComponent(segments[2]);
+      if (userId === admin.id) {
+        throw new ApiRequestError("You cannot delete your own account.", 409);
+      }
+      const existing = await findUser(userId);
+      if (!existing) throw new ApiRequestError("User not found.", 404);
+      const users = await readUsers();
+      if (
+        existing.active &&
+        existing.role === "Administrator" &&
+        users.filter(
+          (user) => user.active && user.role === "Administrator",
+        ).length <= 1
+      ) {
+        throw new ApiRequestError(
+          "Keep at least one active administrator account.",
+          409,
+        );
+      }
+      await removeUser(userId);
+      return responseJson({ users: await readUsers() });
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/profile") {
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const payload = await jsonBody<Record<string, unknown>>(request);
+      if (!payload) return apiError("A JSON request body is required.", 415);
+      const values: ProfileMutationPayload = {
+        name: required(payload.name, "Full name", 120),
+        email: normalizedEmail(payload.email),
+        phone: optional(payload.phone, 40),
+        designation: required(payload.designation, "Designation", 120),
+        currentPassword:
+          typeof payload.currentPassword === "string"
+            ? payload.currentPassword
+            : undefined,
+        newPassword:
+          typeof payload.newPassword === "string" && payload.newPassword
+            ? payload.newPassword
+            : undefined,
+      };
+      requireStrongPassword(values.newPassword);
+      if (values.newPassword) {
+        const verified = await authenticateUser(
+          admin.username,
+          values.currentPassword ?? "",
+        );
+        if (!verified) {
+          throw new ApiRequestError(
+            "Enter your current password to set a new password.",
+            401,
+          );
+        }
+      }
+      const conflict = await userLoginExists(
+        admin.username,
+        values.email,
+        admin.id,
+      );
+      if (conflict === "email") {
+        throw new ApiRequestError(
+          "That email address is already in use.",
+          409,
+        );
+      }
+      const updated = await updateUserProfile(
+        admin.id,
+        {
+          name: values.name,
+          email: values.email,
+          phone: values.phone,
+          designation: values.designation,
+        },
+        values.newPassword,
+      );
+      if (!updated) throw new ApiRequestError("User profile not found.", 404);
+      return responseJson(
+        { user: updated },
+        200,
+        {
+          "set-cookie": adminSessionCookie(
+            request,
+            createAdminSessionToken({
+              id: updated.id,
+              username: updated.username,
+              name: updated.name,
+              email: updated.email,
+              role: updated.role,
+            }),
+          ),
+        },
+      );
+    }
 
     if (request.method === "GET" && url.pathname === "/api/workspace") {
       return responseJson(await readWorkspace());
@@ -862,6 +1220,9 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "master" &&
       segments.length === 3
     ) {
+      if (!["Administrator", "Operations Manager"].includes(admin.role)) {
+        return forbidden();
+      }
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<Record<string, unknown>>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);
@@ -874,6 +1235,9 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "master" &&
       segments.length === 4
     ) {
+      if (!["Administrator", "Operations Manager"].includes(admin.role)) {
+        return forbidden();
+      }
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<Record<string, unknown>>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);
@@ -890,6 +1254,9 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "master" &&
       segments.length === 4
     ) {
+      if (!["Administrator", "Operations Manager"].includes(admin.role)) {
+        return forbidden();
+      }
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       await deleteMasterRecord(
         masterEntity(segments[2]),
@@ -899,6 +1266,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
     }
 
     if (request.method === "POST" && url.pathname === "/api/reports") {
+      if (admin.role === "Viewer") return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<CreateReportPayload>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);
@@ -918,6 +1286,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "reports" &&
       segments[3] === "send"
     ) {
+      if (admin.role === "Viewer") return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const sharePath = await sendReport(segments[2], admin.name);
       return responseJson({ sharePath, workspace: await readWorkspace() });
@@ -928,6 +1297,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "reports" &&
       segments[3] === "sign-admin"
     ) {
+      if (admin.role === "Viewer") return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<Record<string, unknown>>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);

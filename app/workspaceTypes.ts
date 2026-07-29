@@ -3,6 +3,7 @@ import type {
   CompanyProfile,
   EquipmentService,
   Measurement,
+  ServiceImage,
   ServiceReport,
 } from "./reportData";
 
@@ -16,6 +17,45 @@ export type ReportStatus =
 export type SignatureChannel =
   | "client_portal"
   | "admin_device";
+
+export type UserRole =
+  | "Administrator"
+  | "Operations Manager"
+  | "Service Technician"
+  | "Viewer";
+
+export type UserRecord = {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  phone: string;
+  designation: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UserMutationPayload = {
+  username: string;
+  name: string;
+  email: string;
+  phone: string;
+  designation: string;
+  role: UserRole;
+  active: boolean;
+  password?: string;
+};
+
+export type ProfileMutationPayload = {
+  name: string;
+  email: string;
+  phone: string;
+  designation: string;
+  currentPassword?: string;
+  newPassword?: string;
+};
 
 export type MasterEntity =
   | "clients"
@@ -134,6 +174,7 @@ export type CreateReportPayload = {
   checklistResults: Record<string, ChecklistResult[]>;
   measurements: Record<string, Measurement[]>;
   equipmentNotes: Record<string, string>;
+  images: ServiceImage[];
   technicianIds: string[];
   remarks: string;
   followUp: string;

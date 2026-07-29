@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
-import { readWorkspace } from "../server/database.ts";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { adminIdentityFromCookieHeader } from "../server/adminAuth.ts";
+import { findUser, readWorkspace } from "../server/database.ts";
 import { ClientSigningApp } from "./ClientSigningApp";
 import { DigitalServiceApp } from "./DigitalServiceApp";
 
@@ -18,11 +21,17 @@ export default async function Home({
   const params = await searchParams;
   const token = Array.isArray(params.sign) ? params.sign[0] : params.sign;
   if (token) return <ClientSigningApp token={token} />;
+  const requestHeaders = await headers();
+  const sessionUser = adminIdentityFromCookieHeader(
+    requestHeaders.get("cookie"),
+  );
+  if (!sessionUser) redirect("/login");
   const workspace = await readWorkspace();
+  const currentUser = await findUser(sessionUser.id);
+  if (!currentUser?.active) redirect("/login");
   return (
     <DigitalServiceApp
-      adminName={process.env.ADMIN_NAME?.trim() || "Promach Admin"}
-      adminEmail={process.env.ADMIN_EMAIL?.trim() || "admin@promach.local"}
+      currentUser={currentUser}
       initialWorkspace={workspace}
     />
   );

@@ -10,6 +10,15 @@ export type ChecklistResult = {
   remark: string;
 };
 
+export type ServiceImage = {
+  id: string;
+  name: string;
+  caption: string;
+  equipmentId: string | null;
+  dataUrl: string;
+  sizeBytes: number;
+};
+
 export type EquipmentService = {
   id: string;
   name: string;
@@ -50,6 +59,7 @@ export type ServiceReport = {
     signedDate: string;
   };
   equipment: EquipmentService[];
+  images: ServiceImage[];
   signature?: {
     signerName: string;
     signerEmail: string;
@@ -229,6 +239,7 @@ export const serviceReports: ServiceReport[] = [
         reviewRequired: true,
       },
     ],
+    images: [],
   },
   {
     id: "3930",
@@ -279,6 +290,7 @@ export const serviceReports: ServiceReport[] = [
         note: "Service completed and acknowledged by the customer.",
       },
     ],
+    images: [],
   },
 ];
 

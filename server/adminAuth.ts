@@ -1,19 +1,26 @@
 import {
   createHmac,
+  randomBytes,
+  scryptSync,
   timingSafeEqual,
 } from "node:crypto";
+import type { UserRole } from "../app/workspaceTypes.ts";
 
 export type AdminIdentity = {
+  id: string;
+  username: string;
   name: string;
   email: string;
+  role: UserRole;
 };
 
 const ADMIN_COOKIE = "promach_admin_session";
 const SESSION_DURATION_SECONDS = 12 * 60 * 60;
+const PASSWORD_KEY_BYTES = 64;
 
-type SessionPayload = {
-  subject: string;
+type SessionPayload = AdminIdentity & {
   expiresAt: number;
+  version: 2;
 };
 
 function safeEqual(left: string, right: string): boolean {
@@ -23,16 +30,12 @@ function safeEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBytes, rightBytes);
 }
 
-function configuredUsername(): string {
-  return process.env.ADMIN_USERNAME?.trim() ?? "";
-}
-
-function configuredPassword(): string {
-  return process.env.ADMIN_PASSWORD ?? "";
-}
-
 function sessionSecret(): string {
-  return process.env.AUTH_SECRET?.trim() || configuredPassword();
+  return (
+    process.env.AUTH_SECRET?.trim() ||
+    process.env.ADMIN_PASSWORD ||
+    ""
+  );
 }
 
 function signature(value: string): string {
@@ -41,8 +44,7 @@ function signature(value: string): string {
     .digest("base64url");
 }
 
-function cookieValue(request: Request, name: string): string | null {
-  const cookieHeader = request.headers.get("cookie");
+function cookieValue(cookieHeader: string | null, name: string): string | null {
   if (!cookieHeader) return null;
   for (const entry of cookieHeader.split(";")) {
     const separator = entry.indexOf("=");
@@ -74,30 +76,67 @@ function cookieAttributes(request: Request, maxAge: number): string {
     .join("; ");
 }
 
-export function verifyAdminCredentials(
-  username: string,
-  password: string,
-): boolean {
-  const expectedUsername = configuredUsername();
-  const expectedPassword = configuredPassword();
-  if (!expectedUsername || !expectedPassword || !sessionSecret()) return false;
-  return (
-    safeEqual(username, expectedUsername) &&
-    safeEqual(password, expectedPassword)
-  );
+function parseIdentity(token: string | null): AdminIdentity | null {
+  if (!token || !sessionSecret()) return null;
+  const [encoded, submittedSignature, extra] = token.split(".");
+  if (!encoded || !submittedSignature || extra) return null;
+  if (!safeEqual(submittedSignature, signature(encoded))) return null;
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as Partial<SessionPayload>;
+    if (
+      payload.version !== 2 ||
+      !payload.id ||
+      !payload.username ||
+      !payload.name ||
+      !payload.email ||
+      !payload.role ||
+      typeof payload.expiresAt !== "number" ||
+      payload.expiresAt <= Math.floor(Date.now() / 1000)
+    ) {
+      return null;
+    }
+    return {
+      id: payload.id,
+      username: payload.username,
+      name: payload.name,
+      email: payload.email,
+      role: payload.role,
+    };
+  } catch {
+    return null;
+  }
 }
 
-export function createAdminSessionToken(): string {
-  const username = configuredUsername();
-  const secret = sessionSecret();
-  if (!username || !secret) {
+export function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, PASSWORD_KEY_BYTES).toString("hex");
+  return `scrypt$${salt}$${hash}`;
+}
+
+export function verifyPassword(password: string, stored: string): boolean {
+  const [algorithm, salt, expected] = stored.split("$");
+  if (algorithm !== "scrypt" || !salt || !expected) return false;
+  try {
+    const actual = scryptSync(password, salt, PASSWORD_KEY_BYTES).toString("hex");
+    return safeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+export function createAdminSessionToken(identity: AdminIdentity): string {
+  if (!sessionSecret()) {
     throw new Error(
-      "Administrator authentication is not configured. Set ADMIN_USERNAME, ADMIN_PASSWORD, and AUTH_SECRET.",
+      "Authentication is not configured. Set AUTH_SECRET or ADMIN_PASSWORD.",
     );
   }
   const payload: SessionPayload = {
-    subject: username,
+    ...identity,
     expiresAt: Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS,
+    version: 2,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${encoded}.${signature(encoded)}`;
@@ -117,32 +156,12 @@ export function clearAdminSessionCookie(request: Request): string {
   return `${ADMIN_COOKIE}=; ${cookieAttributes(request, 0)}`;
 }
 
+export function adminIdentityFromCookieHeader(
+  cookieHeader: string | null,
+): AdminIdentity | null {
+  return parseIdentity(cookieValue(cookieHeader, ADMIN_COOKIE));
+}
+
 export function adminIdentity(request: Request): AdminIdentity | null {
-  const token = cookieValue(request, ADMIN_COOKIE);
-  const username = configuredUsername();
-  if (!token || !username || !sessionSecret()) return null;
-
-  const [encoded, submittedSignature, extra] = token.split(".");
-  if (!encoded || !submittedSignature || extra) return null;
-  if (!safeEqual(submittedSignature, signature(encoded))) return null;
-
-  try {
-    const payload = JSON.parse(
-      Buffer.from(encoded, "base64url").toString("utf8"),
-    ) as Partial<SessionPayload>;
-    if (
-      payload.subject !== username ||
-      typeof payload.expiresAt !== "number" ||
-      payload.expiresAt <= Math.floor(Date.now() / 1000)
-    ) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
-  return {
-    name: process.env.ADMIN_NAME?.trim() || "Promach Admin",
-    email: process.env.ADMIN_EMAIL?.trim() || "admin@promach.local",
-  };
+  return adminIdentityFromCookieHeader(request.headers.get("cookie"));
 }

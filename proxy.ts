@@ -36,7 +36,7 @@ export function proxy(request: NextRequest): Response {
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json(
-      { error: "Your administrator session has expired. Sign in again." },
+      { error: "Your Promach session has expired. Sign in again." },
       {
         status: 401,
         headers: {

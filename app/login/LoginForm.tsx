@@ -4,12 +4,12 @@ import {
   Eye,
   EyeOff,
   FileCheck2,
-  LoaderCircle,
   LockKeyhole,
   ShieldCheck,
 } from "lucide-react";
 import Image from "next/image";
 import { useState } from "react";
+import { PromachLoader } from "../PromachLoader";
 
 export function LoginForm({ nextPath }: { nextPath: string }) {
   const [username, setUsername] = useState("");
@@ -21,7 +21,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
   async function signIn(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!username.trim() || !password) {
-      setError("Enter your administrator username and password.");
+      setError("Enter your Promach username and password.");
       return;
     }
 
@@ -84,7 +84,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
             <h1>Build the report once. Keep every approval accountable.</h1>
             <p>
               Maintain master data, complete the service record, share it with
-              the client, and retain the signed PDF with its audit history.
+              the client, and retain the signed report with its audit history.
             </p>
           </div>
 
@@ -115,7 +115,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           <span className="login-card-overline">Promach administration</span>
           <h2>Welcome back</h2>
           <p className="login-card-copy">
-            Sign in to manage service reports and master data.
+            Sign in to access the tools assigned to your role.
           </p>
 
           <form onSubmit={signIn}>
@@ -126,7 +126,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
                 autoFocus
                 maxLength={120}
                 onChange={(event) => setUsername(event.target.value)}
-                placeholder="Enter administrator username"
+                placeholder="Enter your username"
                 value={username}
               />
             </label>
@@ -165,7 +165,8 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
             >
               {submitting ? (
                 <>
-                  <LoaderCircle className="spin" size={18} /> Signing in…
+                  <PromachLoader inline label="Signing in" size="small" />
+                  Signing in…
                 </>
               ) : (
                 <>
@@ -176,7 +177,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           </form>
 
           <p className="login-help">
-            Access is limited to authorised Promach administrators.
+            Access is limited to authorised Promach users.
           </p>
         </div>
       </section>

@@ -4,9 +4,10 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronRight,
   Download,
   FileCheck2,
-  LoaderCircle,
+  Images,
   LockKeyhole,
   MapPin,
   ShieldCheck,
@@ -15,6 +16,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { CompanyProfile } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
+import { PromachLoader } from "./PromachLoader";
 import { SignaturePad } from "./SignaturePad";
 import type {
   ClientReportResponse,
@@ -109,7 +111,7 @@ export function ClientSigningApp({ token }: { token: string }) {
   if (loading) {
     return (
       <main className="client-portal client-state">
-        <LoaderCircle className="spin" size={34} />
+        <PromachLoader label="Opening secure service report" size="large" />
         <h1>Opening your service report</h1>
         <p>Checking the secure report link…</p>
       </main>
@@ -153,6 +155,11 @@ export function ClientSigningApp({ token }: { token: string }) {
       </header>
 
       <div className="client-container">
+        <nav className="client-breadcrumbs" aria-label="Breadcrumb">
+          <span>Secure reports</span>
+          <ChevronRight size={14} />
+          <span aria-current="page">Report #{report.id}</span>
+        </nav>
         {completed ? (
           <section className="client-complete-banner">
             <CheckCircle2 size={28} />
@@ -173,7 +180,7 @@ export function ClientSigningApp({ token }: { token: string }) {
               type="button"
             >
               <Download size={17} />
-              Download signed PDF
+              Download signed report
             </button>
           </section>
         ) : (
@@ -284,6 +291,40 @@ export function ClientSigningApp({ token }: { token: string }) {
             </div>
           </div>
 
+          {!!(report.images ?? []).length && (
+            <div className="client-report-section">
+              <span className="client-section-icon">
+                <Images size={19} />
+              </span>
+              <div>
+                <h2>Service images</h2>
+                <p>Photographic evidence supplied with this service report.</p>
+                <div className="client-image-grid">
+                  {(report.images ?? []).map((image, index) => {
+                    const linkedEquipment = report.equipment.find(
+                      (item) => item.id === image.equipmentId,
+                    );
+                    return (
+                      <figure key={image.id}>
+                        <Image
+                          alt={image.caption || `Service image ${index + 1}`}
+                          height={190}
+                          src={image.dataUrl}
+                          unoptimized
+                          width={300}
+                        />
+                        <figcaption>
+                          <strong>{image.caption || `Service image ${index + 1}`}</strong>
+                          <span>{linkedEquipment?.name ?? "General service evidence"}</span>
+                        </figcaption>
+                      </figure>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="client-remarks">
             <div><span>Remarks</span><p>{report.remarks}</p></div>
             <div><span>Follow-up</span><p>{report.followUp}</p></div>
@@ -357,7 +398,7 @@ export function ClientSigningApp({ token }: { token: string }) {
               }
               type="submit"
             >
-              {submitting ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
+              {submitting ? <PromachLoader inline label="Submitting signature" size="small" /> : <ShieldCheck size={17} />}
               {submitting ? "Submitting signature…" : "Sign and complete report"}
             </button>
           </form>

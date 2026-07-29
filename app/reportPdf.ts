@@ -439,6 +439,100 @@ function addEquipment(
   return y + 2;
 }
 
+function addServiceImages(
+  doc: jsPDF,
+  report: ServiceReport,
+  assets: PdfBrandAssets,
+  company: CompanyProfile,
+  startY: number,
+): number {
+  const images = report.images ?? [];
+  if (!images.length) return startY;
+
+  let y = ensureSpace(doc, report, assets, company, startY, 66);
+  y = sectionTitle(doc, "Service images", y);
+
+  for (const [index, image] of images.entries()) {
+    const rowHeight = 51;
+    y = ensureSpace(doc, report, assets, company, y, rowHeight + 4);
+    doc.setFillColor(...soft);
+    doc.setDrawColor(...borderSoft);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(margin, y, contentWidth, rowHeight, 2, 2, "FD");
+
+    const imageBoxX = margin + 3;
+    const imageBoxY = y + 3;
+    const imageBoxWidth = 70;
+    const imageBoxHeight = 45;
+    try {
+      const properties = doc.getImageProperties(image.dataUrl);
+      const scale = Math.min(
+        imageBoxWidth / properties.width,
+        imageBoxHeight / properties.height,
+      );
+      const renderedWidth = properties.width * scale;
+      const renderedHeight = properties.height * scale;
+      const format = image.dataUrl.startsWith("data:image/png")
+        ? "PNG"
+        : image.dataUrl.startsWith("data:image/webp")
+          ? "WEBP"
+          : "JPEG";
+      doc.addImage(
+        image.dataUrl,
+        format,
+        imageBoxX + (imageBoxWidth - renderedWidth) / 2,
+        imageBoxY + (imageBoxHeight - renderedHeight) / 2,
+        renderedWidth,
+        renderedHeight,
+      );
+    } catch {
+      doc.setFillColor(237, 243, 240);
+      doc.roundedRect(
+        imageBoxX,
+        imageBoxY,
+        imageBoxWidth,
+        imageBoxHeight,
+        1,
+        1,
+        "F",
+      );
+      doc.setTextColor(...muted);
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7);
+      doc.text("Service image unavailable", imageBoxX + 5, imageBoxY + 23);
+    }
+
+    const textX = margin + 79;
+    const textWidth = contentWidth - 85;
+    doc.setTextColor(...green);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.7);
+    doc.text(`SERVICE IMAGE ${index + 1}`, textX, y + 8);
+
+    doc.setTextColor(...ink);
+    doc.setFontSize(9);
+    const captionLines = doc.splitTextToSize(
+      clean(image.caption || image.name || `Service image ${index + 1}`),
+      textWidth,
+    );
+    doc.text(captionLines, textX, y + 14);
+
+    const linkedEquipment = report.equipment.find(
+      (item) => item.id === image.equipmentId,
+    );
+    doc.setTextColor(...muted);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(
+      clean(linkedEquipment?.name ?? "General service evidence"),
+      textX,
+      y + 42,
+    );
+    y += rowHeight + 4;
+  }
+  return y + 2;
+}
+
 export async function buildServiceReportPdf(
   report: ServiceReport,
   company: CompanyProfile,
@@ -525,6 +619,8 @@ export async function buildServiceReportPdf(
   for (const eq of report.equipment) {
     y = addEquipment(doc, report, assets, company, eq, y);
   }
+
+  y = addServiceImages(doc, report, assets, company, y);
 
   // Completion and Acknowledgement
   y = ensureSpace(doc, report, assets, company, y, 68);

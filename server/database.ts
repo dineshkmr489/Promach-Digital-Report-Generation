@@ -11,12 +11,14 @@ import type {
   EquipmentRecord,
   LocationRecord,
   MasterEntity,
+  UserRecord,
   ServiceTypeRecord,
   TechnicianRecord,
   WorkspaceReport,
   WorkspaceSnapshot,
 } from "../app/workspaceTypes.ts";
 import type { CompanyProfile } from "../app/reportData.ts";
+import { hashPassword, verifyPassword } from "./adminAuth.ts";
 import { mongoDatabase } from "./mongodb.ts";
 
 export type MasterRecord =
@@ -38,6 +40,10 @@ type StoredState = {
   schemaVersion?: number;
   value?: number;
 };
+type StoredUser = Omit<UserRecord, "id"> & {
+  _id: string;
+  passwordHash: string;
+};
 
 const collectionNames = {
   company: "company_profiles",
@@ -48,8 +54,24 @@ const collectionNames = {
   technicians: "technicians",
   "service-types": "service_types",
   reports: "service_reports",
+  users: "users",
   state: "system_state",
 } as const;
+
+function userFromStored(record: StoredUser): UserRecord {
+  return {
+    id: record._id,
+    username: record.username,
+    name: record.name,
+    email: record.email,
+    phone: record.phone,
+    designation: record.designation,
+    role: record.role,
+    active: record.active,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
 
 function toStored<T extends { id: string }>(record: T): StoredRecord<T> {
   const { id, ...value } = record;
@@ -113,6 +135,22 @@ export async function ensureDatabase(): Promise<void> {
     db
       .collection(collectionNames.reports)
       .createIndex({ status: 1 }, { name: "reports_status" }),
+    db.collection<StoredUser>(collectionNames.users).createIndex(
+      { username: 1 },
+      {
+        name: "users_username_unique",
+        unique: true,
+        collation: { locale: "en", strength: 2 },
+      },
+    ),
+    db.collection<StoredUser>(collectionNames.users).createIndex(
+      { email: 1 },
+      {
+        name: "users_email_unique",
+        unique: true,
+        collation: { locale: "en", strength: 2 },
+      },
+    ),
   ]);
 
   const stateCollection = db.collection<StoredState>(collectionNames.state);
@@ -178,6 +216,31 @@ export async function ensureDatabase(): Promise<void> {
       },
       { upsert: true },
     );
+  }
+
+  const usersCollection = db.collection<StoredUser>(collectionNames.users);
+  if ((await usersCollection.countDocuments({})) === 0) {
+    const now = new Date().toISOString();
+    const username = process.env.ADMIN_USERNAME?.trim() || "promach-admin";
+    const password = process.env.ADMIN_PASSWORD;
+    if (!password) {
+      throw new Error(
+        "ADMIN_PASSWORD is required to create the first administrator account.",
+      );
+    }
+    await usersCollection.insertOne({
+      _id: "bootstrap-admin",
+      username,
+      passwordHash: hashPassword(password),
+      name: process.env.ADMIN_NAME?.trim() || "Promach Admin",
+      email: process.env.ADMIN_EMAIL?.trim() || "admin@promach.local",
+      phone: "",
+      designation: "System Administrator",
+      role: "Administrator",
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   const removedSourceConcept = await stateCollection.findOne({
@@ -356,6 +419,121 @@ export async function ensureDatabase(): Promise<void> {
           _id: "remove-source-concept-v3",
           initializedAt: new Date().toISOString(),
           schemaVersion: 2,
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  const reportImagesInitialized = await stateCollection.findOne({
+    _id: "report-images-v1",
+  });
+  if (!reportImagesInitialized) {
+    await db.collection(collectionNames.reports).updateMany(
+      { images: { $exists: false } },
+      { $set: { images: [] } },
+    );
+    await stateCollection.updateOne(
+      { _id: "report-images-v1" },
+      {
+        $setOnInsert: {
+          _id: "report-images-v1",
+          initializedAt: new Date().toISOString(),
+          schemaVersion: 3,
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  const legacyMarkersCleaned = await stateCollection.findOne({
+    _id: "clean-legacy-markers-v1",
+  });
+  if (!legacyMarkersCleaned) {
+    await Promise.all([
+      db.collection(collectionNames.equipment).updateMany(
+        {},
+        [
+          {
+            $set: {
+              model: {
+                $trim: {
+                  input: {
+                    $replaceAll: {
+                      input: { $ifNull: ["$model", ""] },
+                      find: " (?)",
+                      replacement: "",
+                    },
+                  },
+                },
+              },
+              serial: {
+                $trim: {
+                  input: {
+                    $replaceAll: {
+                      input: { $ifNull: ["$serial", ""] },
+                      find: " (?)",
+                      replacement: "",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      ),
+      db.collection(collectionNames.reports).updateMany(
+        {},
+        [
+          {
+            $set: {
+              equipment: {
+                $map: {
+                  input: { $ifNull: ["$equipment", []] },
+                  as: "item",
+                  in: {
+                    $mergeObjects: [
+                      "$$item",
+                      {
+                        model: {
+                          $trim: {
+                            input: {
+                              $replaceAll: {
+                                input: { $ifNull: ["$$item.model", ""] },
+                                find: " (?)",
+                                replacement: "",
+                              },
+                            },
+                          },
+                        },
+                        serial: {
+                          $trim: {
+                            input: {
+                              $replaceAll: {
+                                input: { $ifNull: ["$$item.serial", ""] },
+                                find: " (?)",
+                                replacement: "",
+                              },
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        ],
+      ),
+    ]);
+    await stateCollection.updateOne(
+      { _id: "clean-legacy-markers-v1" },
+      {
+        $setOnInsert: {
+          _id: "clean-legacy-markers-v1",
+          initializedAt: new Date().toISOString(),
+          schemaVersion: 3,
         },
       },
       { upsert: true },
@@ -618,4 +796,134 @@ export async function completeReportSignature(
     },
   );
   return result.modifiedCount === 1 ? "updated" : "invalid-status";
+}
+
+export async function authenticateUser(
+  username: string,
+  password: string,
+): Promise<UserRecord | null> {
+  const db = await mongoDatabase();
+  const user = await db.collection<StoredUser>(collectionNames.users).findOne(
+    { username },
+    { collation: { locale: "en", strength: 2 } },
+  );
+  if (!user || !user.active || !verifyPassword(password, user.passwordHash)) {
+    return null;
+  }
+  return userFromStored(user);
+}
+
+export async function readUsers(): Promise<UserRecord[]> {
+  const db = await mongoDatabase();
+  const users = await db
+    .collection<StoredUser>(collectionNames.users)
+    .find({})
+    .sort({ name: 1 })
+    .toArray();
+  return users.map(userFromStored);
+}
+
+export async function findUser(userId: string): Promise<UserRecord | null> {
+  const db = await mongoDatabase();
+  const user = await db
+    .collection<StoredUser>(collectionNames.users)
+    .findOne({ _id: userId });
+  return user ? userFromStored(user) : null;
+}
+
+export async function insertUser(
+  record: UserRecord,
+  password: string,
+): Promise<void> {
+  const db = await mongoDatabase();
+  const { id, ...value } = record;
+  await db.collection<StoredUser>(collectionNames.users).insertOne({
+    _id: id,
+    ...value,
+    passwordHash: hashPassword(password),
+  });
+}
+
+export async function replaceUser(
+  userId: string,
+  record: UserRecord,
+  password?: string,
+): Promise<boolean> {
+  const db = await mongoDatabase();
+  const value: Omit<UserRecord, "id"> = {
+    username: record.username,
+    name: record.name,
+    email: record.email,
+    phone: record.phone,
+    designation: record.designation,
+    role: record.role,
+    active: record.active,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+  const update: {
+    $set: Omit<UserRecord, "id">;
+    $setOnInsert?: never;
+  } = { $set: value };
+  const result = password
+    ? await db.collection<StoredUser>(collectionNames.users).updateOne(
+        { _id: userId },
+        { $set: { ...value, passwordHash: hashPassword(password) } },
+      )
+    : await db
+        .collection<StoredUser>(collectionNames.users)
+        .updateOne({ _id: userId }, update);
+  return result.matchedCount === 1;
+}
+
+export async function updateUserProfile(
+  userId: string,
+  values: Pick<UserRecord, "name" | "email" | "phone" | "designation">,
+  password?: string,
+): Promise<UserRecord | null> {
+  const db = await mongoDatabase();
+  const $set: Partial<StoredUser> = {
+    ...values,
+    updatedAt: new Date().toISOString(),
+  };
+  if (password) $set.passwordHash = hashPassword(password);
+  const updated = await db
+    .collection<StoredUser>(collectionNames.users)
+    .findOneAndUpdate(
+      { _id: userId, active: true },
+      { $set },
+      { returnDocument: "after" },
+    );
+  return updated ? userFromStored(updated) : null;
+}
+
+export async function removeUser(userId: string): Promise<boolean> {
+  const db = await mongoDatabase();
+  const result = await db
+    .collection<StoredUser>(collectionNames.users)
+    .deleteOne({ _id: userId });
+  return result.deletedCount === 1;
+}
+
+export async function userLoginExists(
+  username: string,
+  email: string,
+  excludedId?: string,
+): Promise<"username" | "email" | null> {
+  const db = await mongoDatabase();
+  const base = excludedId ? { _id: { $ne: excludedId } } : {};
+  const usernameMatch = await db
+    .collection<StoredUser>(collectionNames.users)
+    .findOne(
+      { ...base, username },
+      { collation: { locale: "en", strength: 2 }, projection: { _id: 1 } },
+    );
+  if (usernameMatch) return "username";
+  const emailMatch = await db
+    .collection<StoredUser>(collectionNames.users)
+    .findOne(
+      { ...base, email },
+      { collation: { locale: "en", strength: 2 }, projection: { _id: 1 } },
+    );
+  return emailMatch ? "email" : null;
 }

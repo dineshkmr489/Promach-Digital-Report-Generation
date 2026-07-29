@@ -17,12 +17,16 @@ import {
   FileText,
   Gauge,
   History,
+  ImagePlus,
+  Images,
+  KeyRound,
   LayoutDashboard,
   Link2,
-  LoaderCircle,
   LogOut,
   MapPin,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   PencilLine,
   Plus,
   Search,
@@ -31,15 +35,18 @@ import {
   Signature,
   Tag,
   Trash2,
+  UserCog,
   UserRound,
+  UserRoundPlus,
   UsersRound,
   Wrench,
   X,
 } from "lucide-react";
 import Image from "next/image";
-import { useMemo, useState } from "react";
-import type { CompanyProfile } from "./reportData";
+import { useEffect, useMemo, useState } from "react";
+import type { CompanyProfile, ServiceImage } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
+import { PromachLoader } from "./PromachLoader";
 import { SignaturePad } from "./SignaturePad";
 import type {
   ChecklistTemplateRecord,
@@ -50,11 +57,20 @@ import type {
   MasterEntity,
   ServiceTypeRecord,
   TechnicianRecord,
+  UserMutationPayload,
+  UserRecord,
+  UserRole,
   WorkspaceReport,
   WorkspaceSnapshot,
 } from "./workspaceTypes";
 
-type View = "overview" | "reports" | "create" | "master";
+type View =
+  | "overview"
+  | "reports"
+  | "create"
+  | "master"
+  | "profile"
+  | "users";
 type MasterTab = MasterEntity;
 type MasterRecord =
   | ClientRecord
@@ -64,12 +80,93 @@ type MasterRecord =
   | TechnicianRecord
   | ServiceTypeRecord;
 
+const MAX_SERVICE_IMAGES = 6;
+const MAX_SERVICE_IMAGE_BYTES = 900_000;
+const MAX_SERVICE_IMAGES_TOTAL_BYTES = 5_000_000;
+const MAX_SERVICE_IMAGE_EDGE = 1600;
+
+function dataUrlBytes(dataUrl: string): number {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+async function compressServiceImage(file: File): Promise<ServiceImage> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error(`${file.name} is not a supported JPG, PNG, or WebP image.`);
+  }
+  if (file.size > 12_000_000) {
+    throw new Error(`${file.name} is larger than the 12 MB upload limit.`);
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const source = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new window.Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`${file.name} could not be read.`));
+      image.src = objectUrl;
+    });
+    const scale = Math.min(
+      1,
+      MAX_SERVICE_IMAGE_EDGE / Math.max(source.naturalWidth, source.naturalHeight),
+    );
+    const width = Math.max(1, Math.round(source.naturalWidth * scale));
+    const height = Math.max(1, Math.round(source.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Image compression is unavailable.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(source, 0, 0, width, height);
+
+    let quality = 0.82;
+    let dataUrl = canvas.toDataURL("image/jpeg", quality);
+    while (dataUrlBytes(dataUrl) > MAX_SERVICE_IMAGE_BYTES && quality > 0.48) {
+      quality -= 0.08;
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+    }
+    const sizeBytes = dataUrlBytes(dataUrl);
+    if (sizeBytes > MAX_SERVICE_IMAGE_BYTES) {
+      throw new Error(
+        `${file.name} could not be compressed below 900 KB. Choose a smaller image.`,
+      );
+    }
+    return {
+      id: crypto.randomUUID(),
+      name: file.name.slice(0, 240),
+      caption: "",
+      equipmentId: null,
+      dataUrl,
+      sizeBytes,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 const navItems = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
   { id: "reports" as const, label: "Service reports", icon: FileText },
   { id: "create" as const, label: "Create report", icon: FilePlus2 },
   { id: "master" as const, label: "Master data", icon: Building2 },
 ];
+
+const administrationNavItems = [
+  { id: "profile" as const, label: "My profile", icon: UserRound },
+  { id: "users" as const, label: "Users and roles", icon: UserCog },
+];
+
+const roleDescriptions: Record<UserRole, string> = {
+  Administrator: "Full access, including users, roles, master data, and reports.",
+  "Operations Manager":
+    "Can manage master data and the complete service-report workflow.",
+  "Service Technician":
+    "Can create and process reports using approved master data.",
+  Viewer: "Read-only access to reports, dashboards, and operational records.",
+};
 
 const masterTabs = [
   { id: "clients" as const, label: "Clients", icon: Building2 },
@@ -94,20 +191,21 @@ function masterSingular(entity: MasterEntity): string {
 }
 
 export function DigitalServiceApp({
-  adminName,
-  adminEmail,
+  currentUser: initialCurrentUser,
   initialWorkspace,
 }: {
-  adminName: string;
-  adminEmail: string;
+  currentUser: UserRecord;
   initialWorkspace: WorkspaceSnapshot;
 }) {
   const [view, setView] = useState<View>("overview");
+  const [currentUser, setCurrentUser] =
+    useState<UserRecord>(initialCurrentUser);
   const [masterTab, setMasterTab] = useState<MasterTab>("clients");
   const [masterNavigationOpen, setMasterNavigationOpen] = useState(false);
   const [workspace, setWorkspace] =
     useState<WorkspaceSnapshot>(initialWorkspace);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedReport, setSelectedReport] =
     useState<WorkspaceReport | null>(null);
   const [query, setQuery] = useState("");
@@ -138,7 +236,20 @@ export function DigitalServiceApp({
     );
   }, [query, workspace.reports]);
 
+  const canManageMaster = ["Administrator", "Operations Manager"].includes(
+    currentUser.role,
+  );
+  const canCreateReports = currentUser.role !== "Viewer";
+  const availableNavItems = navItems.filter(
+    (item) =>
+      (item.id !== "create" || canCreateReports) &&
+      (item.id !== "master" || canManageMaster),
+  );
+
   function navigate(nextView: View) {
+    if (nextView === "users" && currentUser.role !== "Administrator") return;
+    if (nextView === "master" && !canManageMaster) return;
+    if (nextView === "create" && !canCreateReports) return;
     setView(nextView);
     setMenuOpen(false);
   }
@@ -181,9 +292,9 @@ export function DigitalServiceApp({
   async function generatePdf(report: WorkspaceReport) {
     try {
       await downloadServiceReportPdf(report, workspace.company);
-      toast(`Report ${report.id} PDF generated.`);
+      toast(`Service report ${report.id} downloaded.`);
     } catch {
-      toast(`Report ${report.id} PDF could not be generated.`);
+      toast(`Service report ${report.id} could not be downloaded.`);
     }
   }
 
@@ -226,8 +337,14 @@ export function DigitalServiceApp({
   ).length;
 
   return (
-    <div className="real-app-shell">
-      <aside className={`real-sidebar ${menuOpen ? "open" : ""}`}>
+    <div
+      className={`real-app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+    >
+      <aside
+        className={`real-sidebar ${menuOpen ? "open" : ""} ${
+          sidebarCollapsed ? "collapsed" : ""
+        }`}
+      >
         <div className="real-brand">
           <span className="real-brand-mark">
             <Image
@@ -242,11 +359,32 @@ export function DigitalServiceApp({
             <strong>PROMACH</strong>
             <small>Digital service reports</small>
           </div>
+          <button
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="desktop-sidebar-toggle"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            type="button"
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen size={18} />
+            ) : (
+              <PanelLeftClose size={18} />
+            )}
+          </button>
+          <button
+            aria-label="Close navigation"
+            className="mobile-sidebar-close"
+            onClick={() => setMenuOpen(false)}
+            type="button"
+          >
+            <X size={19} />
+          </button>
         </div>
 
         <nav aria-label="Primary navigation">
           <span className="nav-overline">Workspace</span>
-          {navItems.map((item) => {
+          {availableNavItems.map((item) => {
             const Icon = item.icon;
             return (
               <div className="sidebar-nav-group" key={item.id}>
@@ -263,6 +401,7 @@ export function DigitalServiceApp({
                   }
                   className={view === item.id ? "active" : ""}
                   onClick={() => navigateFromSidebar(item.id)}
+                  title={sidebarCollapsed ? item.label : undefined}
                   type="button"
                 >
                   <Icon size={19} />
@@ -310,29 +449,59 @@ export function DigitalServiceApp({
               </div>
             );
           })}
+          <span className="nav-overline administration-overline">
+            Administration
+          </span>
+          {administrationNavItems
+            .filter(
+              (item) =>
+                item.id !== "users" || currentUser.role === "Administrator",
+            )
+            .map((item) => {
+              const Icon = item.icon;
+              return (
+                <div className="sidebar-nav-group" key={item.id}>
+                  <button
+                    className={view === item.id ? "active" : ""}
+                    onClick={() => navigate(item.id)}
+                    title={sidebarCollapsed ? item.label : undefined}
+                    type="button"
+                  >
+                    <Icon size={19} />
+                    <span>{item.label}</span>
+                  </button>
+                </div>
+              );
+            })}
         </nav>
 
-        <div className="admin-mini">
+        <button
+          className="admin-mini"
+          onClick={() => navigate("profile")}
+          title={sidebarCollapsed ? "My profile" : undefined}
+          type="button"
+        >
           <span><UserRound size={15} /></span>
           <div>
-            <strong>{adminName}</strong>
-            <small>{adminEmail}</small>
+            <strong>{currentUser.name}</strong>
+            <small>{currentUser.role}</small>
           </div>
-          <button
-            aria-label="Sign out"
-            className="admin-sign-out"
-            disabled={signingOut}
-            onClick={() => void signOut()}
-            title="Sign out"
-            type="button"
-          >
-            {signingOut ? (
-              <LoaderCircle className="spin" size={14} />
-            ) : (
-              <LogOut size={14} />
-            )}
-          </button>
-        </div>
+        </button>
+        <button
+          aria-label="Sign out"
+          className="sidebar-sign-out"
+          disabled={signingOut}
+          onClick={() => void signOut()}
+          title="Sign out"
+          type="button"
+        >
+          {signingOut ? (
+            <PromachLoader inline label="Signing out" size="small" />
+          ) : (
+            <LogOut size={16} />
+          )}
+          <span>Sign out</span>
+        </button>
       </aside>
 
       {menuOpen && (
@@ -370,19 +539,27 @@ export function DigitalServiceApp({
               <span />
               {awaiting} awaiting signature
             </div>
-            <button
-              className="quick-create"
-              onClick={() => navigate("create")}
-              type="button"
-            >
-              <Plus size={16} /> New report
-            </button>
+            {canCreateReports && (
+              <button
+                className="quick-create"
+                onClick={() => navigate("create")}
+                type="button"
+              >
+                <Plus size={16} /> New report
+              </button>
+            )}
           </div>
         </header>
 
         <div className="real-page">
+          <Breadcrumbs
+            masterTab={masterTab}
+            onNavigate={navigate}
+            view={view}
+          />
           {view === "overview" && (
             <Overview
+              canCreate={canCreateReports}
               workspace={workspace}
               reports={filteredReports}
               onCreate={() => navigate("create")}
@@ -392,6 +569,7 @@ export function DigitalServiceApp({
           )}
           {view === "reports" && (
             <Reports
+              canCreate={canCreateReports}
               reports={filteredReports}
               onCreate={() => navigate("create")}
               onOpen={setSelectedReport}
@@ -417,11 +595,26 @@ export function DigitalServiceApp({
               onNotice={toast}
             />
           )}
+          {view === "profile" && (
+            <ProfilePage
+              currentUser={currentUser}
+              onSaved={(user) => {
+                setCurrentUser(user);
+                toast("Profile updated.");
+              }}
+            />
+          )}
+          {view === "users" && currentUser.role === "Administrator" && (
+            <UserManagementPage
+              currentUser={currentUser}
+              onNotice={toast}
+            />
+          )}
         </div>
       </main>
 
       <nav className="real-mobile-nav" aria-label="Mobile navigation">
-        {navItems.map((item) => {
+        {availableNavItems.slice(0, 4).map((item) => {
           const Icon = item.icon;
           return (
             <button
@@ -439,6 +632,7 @@ export function DigitalServiceApp({
 
       {selectedReport && (
         <ReportDetail
+          canOperate={canCreateReports}
           company={workspace.company}
           report={selectedReport}
           onClose={() => setSelectedReport(null)}
@@ -479,6 +673,45 @@ export function DigitalServiceApp({
         </div>
       )}
     </div>
+  );
+}
+
+function Breadcrumbs({
+  masterTab,
+  onNavigate,
+  view,
+}: {
+  masterTab: MasterTab;
+  onNavigate: (view: View) => void;
+  view: View;
+}) {
+  const labels: Record<View, string> = {
+    overview: "Overview",
+    reports: "Service reports",
+    create: "Create report",
+    master: "Master data",
+    profile: "My profile",
+    users: "Users and roles",
+  };
+  const masterLabel =
+    masterTabs.find((item) => item.id === masterTab)?.label ?? "Records";
+  return (
+    <nav className="app-breadcrumbs" aria-label="Breadcrumb">
+      <button onClick={() => onNavigate("overview")} type="button">
+        <LayoutDashboard size={14} />
+        Workspace
+      </button>
+      <ChevronRight size={14} />
+      <span aria-current={view === "master" ? undefined : "page"}>
+        {labels[view]}
+      </span>
+      {view === "master" && (
+        <>
+          <ChevronRight size={14} />
+          <span aria-current="page">{masterLabel}</span>
+        </>
+      )}
+    </nav>
   );
 }
 
@@ -529,12 +762,14 @@ function StatusBadge({ status }: { status: WorkspaceReport["status"] }) {
 }
 
 function Overview({
+  canCreate,
   workspace,
   reports,
   onCreate,
   onOpen,
   onViewReports,
 }: {
+  canCreate: boolean;
   workspace: WorkspaceSnapshot;
   reports: WorkspaceReport[];
   onCreate: () => void;
@@ -550,6 +785,7 @@ function Overview({
   const drafts = workspace.reports.filter(
     (report) => report.status === "Draft",
   ).length;
+  const activeClients = workspace.clients.filter((item) => item.active).length;
 
   return (
     <>
@@ -557,19 +793,19 @@ function Overview({
         eyebrow="Admin workspace · live report workflow"
         title="Service reporting, end to end"
         description="Maintain reusable data, create each report once, share it securely with the client, and keep the signed result locked with its audit history."
-        action={
+        action={canCreate ? (
           <button className="real-primary-button" onClick={onCreate} type="button">
             <Plus size={17} />
             Create service report
           </button>
-        }
+        ) : undefined}
       />
 
       <section className="real-metrics" aria-label="Workflow totals">
         <Metric icon={FileText} label="All reports" value={String(workspace.reports.length).padStart(2, "0")} note={`${drafts} drafts`} tone="blue" />
         <Metric icon={Signature} label="Awaiting signature" value={String(awaiting).padStart(2, "0")} note="Secure links active" tone="amber" />
-        <Metric icon={FileCheck2} label="Signed and locked" value={String(completed).padStart(2, "0")} note="PDF ready" tone="green" />
-        <Metric icon={Building2} label="Active clients" value={String(workspace.clients.length).padStart(2, "0")} note={`${workspace.equipment.length} equipment records`} tone="violet" />
+        <Metric icon={FileCheck2} label="Signed and locked" value={String(completed).padStart(2, "0")} note="Report ready" tone="green" />
+        <Metric icon={Building2} label="Active clients" value={String(activeClients).padStart(2, "0")} note={`${workspace.equipment.filter((item) => item.active).length} active equipment`} tone="violet" />
       </section>
 
       <section className="workflow-banner">
@@ -584,7 +820,7 @@ function Overview({
           <ChevronRight size={16} />
           <span><i>3</i> Share or sign here</span>
           <ChevronRight size={16} />
-          <span><i>4</i> Locked PDF</span>
+          <span><i>4</i> Locked report</span>
         </div>
       </section>
 
@@ -619,18 +855,28 @@ function Overview({
             </div>
           </div>
           <div className="master-coverage">
-            <Coverage icon={Building2} label="Clients" count={workspace.clients.length} />
-            <Coverage icon={MapPin} label="Sites" count={workspace.locations.length} />
-            <Coverage icon={Gauge} label="Equipment" count={workspace.equipment.length} />
-            <Coverage icon={ClipboardCheck} label="Checklists" count={workspace.checklistTemplates.length} />
-            <Coverage icon={UsersRound} label="Technicians" count={workspace.technicians.length} />
-            <Coverage icon={Tag} label="Service Types" count={workspace.serviceTypes.length} />
+            <Coverage icon={Building2} label="Clients" count={workspace.clients.filter((item) => item.active).length} />
+            <Coverage icon={MapPin} label="Sites" count={workspace.locations.filter((item) => item.active).length} />
+            <Coverage icon={Gauge} label="Equipment" count={workspace.equipment.filter((item) => item.active).length} />
+            <Coverage icon={ClipboardCheck} label="Checklists" count={workspace.checklistTemplates.filter((item) => item.active).length} />
+            <Coverage icon={UsersRound} label="Technicians" count={workspace.technicians.filter((item) => item.active).length} />
+            <Coverage icon={Tag} label="Service Types" count={workspace.serviceTypes.filter((item) => item.active).length} />
           </div>
-          <button className="create-callout" onClick={onCreate} type="button">
-            <span><FilePlus2 size={21} /></span>
-            <div><strong>Create the next report</strong><small>Choose a client and the app loads its sites, equipment, and checklists.</small></div>
-            <ArrowRight size={17} />
-          </button>
+          {canCreate ? (
+            <button className="create-callout" onClick={onCreate} type="button">
+              <span><FilePlus2 size={21} /></span>
+              <div><strong>Create the next report</strong><small>Choose a client and the app loads its sites, equipment, and checklists.</small></div>
+              <ArrowRight size={17} />
+            </button>
+          ) : (
+            <div className="profile-permission-note">
+              <Eye size={18} />
+              <div>
+                <strong>Read-only workspace</strong>
+                <p>Your Viewer role can review and download completed reports.</p>
+              </div>
+            </div>
+          )}
         </article>
       </section>
     </>
@@ -700,10 +946,12 @@ function OperationalReportRow({
 }
 
 function Reports({
+  canCreate,
   reports,
   onCreate,
   onOpen,
 }: {
+  canCreate: boolean;
   reports: WorkspaceReport[];
   onCreate: () => void;
   onOpen: (report: WorkspaceReport) => void;
@@ -726,12 +974,12 @@ function Reports({
       <PageHeading
         eyebrow={`${reports.length} report records`}
         title="Service reports"
-        description="Draft, send, collect the client signature, and download the locked signed copy from one place."
-        action={
+        description="Draft, share, collect the client signature, and download the locked service report from one place."
+        action={canCreate ? (
           <button className="real-primary-button" onClick={onCreate} type="button">
             <Plus size={17} /> New report
           </button>
-        }
+        ) : undefined}
       />
       <section className="report-status-summary">
         {["Draft", "Awaiting client signature", "Completed"].map((status) => (
@@ -804,19 +1052,23 @@ function CreateReport({
     checklistResults: {},
     measurements: {},
     equipmentNotes: {},
+    images: [],
     technicianIds: [],
     remarks: "",
     followUp: "No follow-up required.",
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [processingImages, setProcessingImages] = useState(false);
 
   const locations = workspace.locations.filter(
-    (item) => item.clientId === form.clientId,
+    (item) => item.clientId === form.clientId && item.active,
   );
   const equipment = workspace.equipment.filter(
     (item) =>
-      item.clientId === form.clientId && item.locationId === form.locationId,
+      item.clientId === form.clientId &&
+      item.locationId === form.locationId &&
+      item.active,
   );
   const selectedClient = workspace.clients.find(
     (item) => item.id === form.clientId,
@@ -864,6 +1116,11 @@ function CreateReport({
           ...current,
           equipmentIds: current.equipmentIds.filter(
             (id) => id !== equipmentId,
+          ),
+          images: current.images.map((image) =>
+            image.equipmentId === equipmentId
+              ? { ...image, equipmentId: null }
+              : image,
           ),
         };
       }
@@ -931,6 +1188,59 @@ function CreateReport({
         measurements: { ...current.measurements, [equipmentId]: next },
       };
     });
+  }
+
+  async function addServiceImages(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    if (form.images.length + files.length > MAX_SERVICE_IMAGES) {
+      setError(`Add no more than ${MAX_SERVICE_IMAGES} service images.`);
+      return;
+    }
+
+    setProcessingImages(true);
+    setError("");
+    try {
+      const compressed = await Promise.all(files.map(compressServiceImage));
+      const defaultEquipmentId =
+        selectedEquipment.length === 1 ? selectedEquipment[0].id : null;
+      const nextImages = compressed.map((image) => ({
+        ...image,
+        equipmentId: defaultEquipmentId,
+      }));
+      const totalBytes = [...form.images, ...nextImages].reduce(
+        (sum, image) => sum + image.sizeBytes,
+        0,
+      );
+      if (totalBytes > MAX_SERVICE_IMAGES_TOTAL_BYTES) {
+        throw new Error("The combined service images must be 5 MB or less.");
+      }
+      setForm((current) => ({
+        ...current,
+        images: [...current.images, ...nextImages],
+      }));
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to process images.",
+      );
+    } finally {
+      setProcessingImages(false);
+    }
+  }
+
+  function updateServiceImage(
+    imageId: string,
+    changes: Partial<Pick<ServiceImage, "caption" | "equipmentId">>,
+  ) {
+    setForm((current) => ({
+      ...current,
+      images: current.images.map((image) =>
+        image.id === imageId ? { ...image, ...changes } : image,
+      ),
+    }));
   }
 
   function next() {
@@ -1040,7 +1350,7 @@ function CreateReport({
                     }}
                   >
                     <option value="">Select client</option>
-                    {workspace.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    {workspace.clients.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                   </select>
                 </label>
                 <label>
@@ -1230,6 +1540,91 @@ function CreateReport({
                     <textarea rows={3} value={form.followUp} onChange={(event) => update("followUp", event.target.value)} placeholder="Required follow-up or no follow-up required" />
                   </label>
                 </div>
+                <section className="service-images-field" aria-labelledby="service-images-title">
+                  <header>
+                    <div>
+                      <span className="service-images-icon"><Images size={18} /></span>
+                      <div>
+                        <h3 id="service-images-title">Service images</h3>
+                        <p>Optional evidence included in the service report.</p>
+                      </div>
+                    </div>
+                    <label className={`service-image-upload ${processingImages ? "disabled" : ""}`}>
+                      {processingImages ? <PromachLoader inline label="Compressing images" size="small" /> : <ImagePlus size={16} />}
+                      {processingImages ? "Compressing…" : "Add images"}
+                      <input
+                        accept="image/jpeg,image/png,image/webp"
+                        disabled={processingImages || form.images.length >= MAX_SERVICE_IMAGES}
+                        multiple
+                        onChange={addServiceImages}
+                        type="file"
+                      />
+                    </label>
+                  </header>
+                  <div className="service-images-guidance">
+                    JPG, PNG or WebP · up to {MAX_SERVICE_IMAGES} images · automatically compressed · combined maximum 5 MB
+                  </div>
+                  {form.images.length ? (
+                    <div className="service-image-editor-grid">
+                      {form.images.map((image, index) => (
+                        <article key={image.id}>
+                          <div className="service-image-preview">
+                            <Image
+                              alt={image.caption || `Service image ${index + 1}`}
+                              height={150}
+                              src={image.dataUrl}
+                              unoptimized
+                              width={240}
+                            />
+                            <span>{Math.max(1, Math.round(image.sizeBytes / 1024))} KB</span>
+                          </div>
+                          <label>
+                            Related equipment
+                            <select
+                              value={image.equipmentId ?? ""}
+                              onChange={(event) =>
+                                updateServiceImage(image.id, {
+                                  equipmentId: event.target.value || null,
+                                })
+                              }
+                            >
+                              <option value="">General service image</option>
+                              {selectedEquipment.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Caption
+                            <input
+                              maxLength={240}
+                              onChange={(event) =>
+                                updateServiceImage(image.id, {
+                                  caption: event.target.value,
+                                })
+                              }
+                              placeholder="Describe what the image shows"
+                              value={image.caption}
+                            />
+                          </label>
+                          <button
+                            onClick={() =>
+                              update("images", form.images.filter((item) => item.id !== image.id))
+                            }
+                            type="button"
+                          >
+                            <Trash2 size={15} /> Remove image
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="service-images-empty">
+                      <ImagePlus size={20} />
+                      <span>No service images added. This section is optional.</span>
+                    </div>
+                  )}
+                </section>
               </div>
             </>
           )}
@@ -1238,7 +1633,7 @@ function CreateReport({
             <>
               <FormSectionHeading number="03" title="Technicians and final review" description="The draft can be reviewed again before it is sent." />
               <div className="technician-picker">
-                {workspace.technicians.map((item) => {
+                {workspace.technicians.filter((item) => item.active).map((item) => {
                   const selected = form.technicianIds.includes(item.id);
                   return (
                     <button className={selected ? "selected" : ""} key={item.id} onClick={() => toggleArray("technicianIds", item.id)} type="button">
@@ -1258,11 +1653,12 @@ function CreateReport({
                 </dl>
                 <section><span>Equipment</span><p>{selectedEquipment.map((item) => item.name).join(", ")}</p></section>
                 <section><span>Technicians</span><p>{selectedTechnicians.map((item) => item.name).join(", ") || "Select below"}</p></section>
+                <section><span>Images</span><p>{form.images.length ? `${form.images.length} compressed service image${form.images.length === 1 ? "" : "s"}` : "No images added"}</p></section>
                 <section><span>Summary</span><p>{form.summary}</p></section>
               </div>
               <div className="lock-explainer">
                 <ShieldCheck size={18} />
-                <p><strong>Signing rule:</strong> the report stays editable as a draft. After a client signs, it becomes locked and the PDF uses that exact signed version.</p>
+                <p><strong>Signing rule:</strong> review the draft before sharing it. After a client signs, the completed service report is locked to that exact version.</p>
               </div>
             </>
           )}
@@ -1274,7 +1670,7 @@ function CreateReport({
               <button className="real-primary-button" onClick={next} type="button">Continue <ArrowRight size={15} /></button>
             ) : (
               <button className="real-primary-button" disabled={saving} onClick={createDraft} type="button">
-                {saving ? <LoaderCircle className="spin" size={16} /> : <FilePlus2 size={16} />}
+                {saving ? <PromachLoader inline label="Creating report" size="small" /> : <FilePlus2 size={16} />}
                 {saving ? "Creating draft…" : "Create draft report"}
               </button>
             )}
@@ -1298,6 +1694,679 @@ function FormSectionHeading({
     <div className="form-section-heading">
       <span>{number}</span>
       <div><h2>{title}</h2><p>{description}</p></div>
+    </div>
+  );
+}
+
+function ProfilePage({
+  currentUser,
+  onSaved,
+}: {
+  currentUser: UserRecord;
+  onSaved: (user: UserRecord) => void;
+}) {
+  const [form, setForm] = useState({
+    name: currentUser.name,
+    email: currentUser.email,
+    phone: currentUser.phone,
+    designation: currentUser.designation,
+    currentPassword: "",
+    newPassword: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const payload = (await response.json()) as
+        | { user: UserRecord }
+        | { error: string };
+      if (!response.ok || !("user" in payload)) {
+        throw new Error(
+          "error" in payload ? payload.error : "Unable to update profile.",
+        );
+      }
+      setForm((current) => ({
+        ...current,
+        name: payload.user.name,
+        email: payload.user.email,
+        phone: payload.user.phone,
+        designation: payload.user.designation,
+        currentPassword: "",
+        newPassword: "",
+      }));
+      onSaved(payload.user);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to update profile.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="Personal account"
+        title="My profile"
+        description="Review your access level and keep your contact and security information current."
+      />
+      <section className="profile-layout">
+        <aside className="real-panel profile-summary">
+          <span className="profile-avatar">
+            {currentUser.name
+              .split(/\s+/)
+              .map((part) => part[0])
+              .join("")
+              .slice(0, 2)}
+          </span>
+          <h2>{currentUser.name}</h2>
+          <p>{currentUser.designation}</p>
+          <span className="role-badge">{currentUser.role}</span>
+          <dl>
+            <div>
+              <dt>Username</dt>
+              <dd>{currentUser.username}</dd>
+            </div>
+            <div>
+              <dt>Account status</dt>
+              <dd>{currentUser.active ? "Active" : "Inactive"}</dd>
+            </div>
+          </dl>
+          <div className="profile-permission-note">
+            <ShieldCheck size={18} />
+            <div>
+              <strong>Role permissions</strong>
+              <p>{roleDescriptions[currentUser.role]}</p>
+            </div>
+          </div>
+        </aside>
+        <form className="real-panel profile-form" onSubmit={save}>
+          <header>
+            <div>
+              <span>Profile details</span>
+              <h2>Contact and security</h2>
+              <p>Changing the password requires your current password.</p>
+            </div>
+          </header>
+          <div className="form-grid two">
+            <label>
+              Full name
+              <input
+                maxLength={120}
+                onChange={(event) =>
+                  setForm({ ...form, name: event.target.value })
+                }
+                required
+                value={form.name}
+              />
+            </label>
+            <label>
+              Designation
+              <input
+                maxLength={120}
+                onChange={(event) =>
+                  setForm({ ...form, designation: event.target.value })
+                }
+                required
+                value={form.designation}
+              />
+            </label>
+            <label>
+              Email
+              <input
+                maxLength={180}
+                onChange={(event) =>
+                  setForm({ ...form, email: event.target.value })
+                }
+                required
+                type="email"
+                value={form.email}
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                maxLength={40}
+                onChange={(event) =>
+                  setForm({ ...form, phone: event.target.value })
+                }
+                value={form.phone}
+              />
+            </label>
+          </div>
+          <div className="profile-password-section">
+            <span>
+              <KeyRound size={17} />
+              Optional password change
+            </span>
+            <div className="form-grid two">
+              <label>
+                Current password
+                <input
+                  autoComplete="current-password"
+                  onChange={(event) =>
+                    setForm({ ...form, currentPassword: event.target.value })
+                  }
+                  type="password"
+                  value={form.currentPassword}
+                />
+              </label>
+              <label>
+                New password
+                <input
+                  autoComplete="new-password"
+                  minLength={12}
+                  onChange={(event) =>
+                    setForm({ ...form, newPassword: event.target.value })
+                  }
+                  placeholder="At least 12 characters"
+                  type="password"
+                  value={form.newPassword}
+                />
+              </label>
+            </div>
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          <footer>
+            <button
+              className="real-primary-button"
+              disabled={saving}
+              type="submit"
+            >
+              {saving ? (
+                <PromachLoader inline label="Saving profile" size="small" />
+              ) : (
+                <Check size={16} />
+              )}
+              {saving ? "Saving profile…" : "Save profile"}
+            </button>
+          </footer>
+        </form>
+      </section>
+    </>
+  );
+}
+
+function UserManagementPage({
+  currentUser,
+  onNotice,
+}: {
+  currentUser: UserRecord;
+  onNotice: (message: string) => void;
+}) {
+  const [users, setUsers] = useState<UserRecord[] | null>(null);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<UserRecord | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState<UserRecord | null>(null);
+  const [pageSize, setPageSize] = useState(8);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/users", { headers: { accept: "application/json" } })
+      .then(async (response) => {
+        const payload = (await response.json()) as
+          | { users: UserRecord[] }
+          | { error: string };
+        if (!response.ok || !("users" in payload)) {
+          throw new Error(
+            "error" in payload ? payload.error : "Unable to load users.",
+          );
+        }
+        if (!cancelled) setUsers(payload.users);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(
+            reason instanceof Error ? reason.message : "Unable to load users.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const totalPages = Math.max(1, Math.ceil((users?.length ?? 0) / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleUsers =
+    users?.slice((currentPage - 1) * pageSize, currentPage * pageSize) ?? [];
+
+  function saved(nextUsers: UserRecord[], message: string) {
+    setUsers(nextUsers);
+    setAdding(false);
+    setEditing(null);
+    setDeleting(null);
+    onNotice(message);
+  }
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="Access administration"
+        title="Users and roles"
+        description="Create authorised users, assign operational permissions, and deactivate access without changing application code."
+        action={
+          <button
+            className="real-primary-button"
+            onClick={() => setAdding(true)}
+            type="button"
+          >
+            <UserRoundPlus size={17} /> Add user
+          </button>
+        }
+      />
+      <section className="real-panel user-management-panel">
+        <div className="user-role-summary">
+          {(Object.keys(roleDescriptions) as UserRole[]).map((role) => (
+            <article key={role}>
+              <span>{users?.filter((user) => user.role === role).length ?? 0}</span>
+              <div>
+                <strong>{role}</strong>
+                <small>{roleDescriptions[role]}</small>
+              </div>
+            </article>
+          ))}
+        </div>
+        {users === null && !error ? (
+          <div className="table-loading-state">
+            <PromachLoader label="Loading users and roles" size="large" />
+          </div>
+        ) : error ? (
+          <div className="real-empty">
+            <AlertTriangle size={24} />
+            <strong>Users could not be loaded</strong>
+            <span>{error}</span>
+          </div>
+        ) : (
+          <>
+            <div className="user-table">
+              <div className="user-table-head">
+                <span>User</span>
+                <span>Role</span>
+                <span>Contact</span>
+                <span>Status</span>
+                <span>Actions</span>
+              </div>
+              {visibleUsers.map((user) => (
+                <article key={user.id}>
+                  <span className="user-identity-cell">
+                    <i>
+                      {user.name
+                        .split(/\s+/)
+                        .map((part) => part[0])
+                        .join("")
+                        .slice(0, 2)}
+                    </i>
+                    <b>{user.name}</b>
+                    <small>@{user.username} · {user.designation}</small>
+                  </span>
+                  <span>
+                    <b>{user.role}</b>
+                    <small>{roleDescriptions[user.role]}</small>
+                  </span>
+                  <span>
+                    <b>{user.email}</b>
+                    <small>{user.phone || "No phone recorded"}</small>
+                  </span>
+                  <span>
+                    <StatusPill active={user.active} />
+                  </span>
+                  {user.id === currentUser.id ? (
+                    <span className="current-user-label">Current user</span>
+                  ) : (
+                    <MasterRecordActions
+                      compact
+                      name={user.name}
+                      onDelete={() => setDeleting(user)}
+                      onEdit={() => setEditing(user)}
+                    />
+                  )}
+                </article>
+              ))}
+            </div>
+            <Pagination
+              currentPage={currentPage}
+              itemLabel="users"
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+              pageSize={pageSize}
+              pageSizeOptions={[8, 16, 32]}
+              totalItems={users?.length ?? 0}
+            />
+          </>
+        )}
+      </section>
+      {(adding || editing) && (
+        <UserDialog
+          record={editing ?? undefined}
+          onClose={() => {
+            setAdding(false);
+            setEditing(null);
+          }}
+          onSaved={(nextUsers) =>
+            saved(
+              nextUsers,
+              editing ? "User account updated." : "User account created.",
+            )
+          }
+        />
+      )}
+      {deleting && (
+        <DeleteUserDialog
+          currentUserId={currentUser.id}
+          onClose={() => setDeleting(null)}
+          onDeleted={(nextUsers) =>
+            saved(nextUsers, "User account deleted.")
+          }
+          user={deleting}
+        />
+      )}
+    </>
+  );
+}
+
+function UserDialog({
+  record,
+  onClose,
+  onSaved,
+}: {
+  record?: UserRecord;
+  onClose: () => void;
+  onSaved: (users: UserRecord[]) => void;
+}) {
+  const [form, setForm] = useState<UserMutationPayload>({
+    username: record?.username ?? "",
+    name: record?.name ?? "",
+    email: record?.email ?? "",
+    phone: record?.phone ?? "",
+    designation: record?.designation ?? "",
+    role: record?.role ?? "Service Technician",
+    active: record?.active ?? true,
+    password: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(
+        record ? `/api/users/${encodeURIComponent(record.id)}` : "/api/users",
+        {
+          method: record ? "PUT" : "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(form),
+        },
+      );
+      const payload = (await response.json()) as
+        | { users: UserRecord[] }
+        | { error: string };
+      if (!response.ok || !("users" in payload)) {
+        throw new Error(
+          "error" in payload ? payload.error : "Unable to save user.",
+        );
+      }
+      onSaved(payload.users);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to save user.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="modal-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="user-dialog-title"
+    >
+      <button
+        aria-label="Close"
+        className="modal-scrim"
+        onClick={onClose}
+        type="button"
+      />
+      <form className="form-dialog user-dialog" onSubmit={save}>
+        <header>
+          <div>
+            <span>Access control</span>
+            <h2 id="user-dialog-title">
+              {record ? "Update user" : "Create user"}
+            </h2>
+          </div>
+          <button aria-label="Close" onClick={onClose} type="button">
+            <X size={19} />
+          </button>
+        </header>
+        <div className="dialog-body">
+          <div className="form-grid two">
+            <label>
+              Full name
+              <input
+                maxLength={120}
+                onChange={(event) =>
+                  setForm({ ...form, name: event.target.value })
+                }
+                required
+                value={form.name}
+              />
+            </label>
+            <label>
+              Username
+              <input
+                autoCapitalize="none"
+                autoComplete="off"
+                maxLength={80}
+                onChange={(event) =>
+                  setForm({ ...form, username: event.target.value })
+                }
+                required
+                value={form.username}
+              />
+            </label>
+            <label>
+              Email
+              <input
+                maxLength={180}
+                onChange={(event) =>
+                  setForm({ ...form, email: event.target.value })
+                }
+                required
+                type="email"
+                value={form.email}
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                maxLength={40}
+                onChange={(event) =>
+                  setForm({ ...form, phone: event.target.value })
+                }
+                value={form.phone}
+              />
+            </label>
+            <label>
+              Designation
+              <input
+                maxLength={120}
+                onChange={(event) =>
+                  setForm({ ...form, designation: event.target.value })
+                }
+                required
+                value={form.designation}
+              />
+            </label>
+            <label>
+              Role
+              <select
+                onChange={(event) =>
+                  setForm({ ...form, role: event.target.value as UserRole })
+                }
+                value={form.role}
+              >
+                {(Object.keys(roleDescriptions) as UserRole[]).map((role) => (
+                  <option key={role}>{role}</option>
+                ))}
+              </select>
+            </label>
+            <label className="span-two">
+              {record ? "New password (optional)" : "Temporary password"}
+              <input
+                autoComplete="new-password"
+                minLength={12}
+                onChange={(event) =>
+                  setForm({ ...form, password: event.target.value })
+                }
+                placeholder="At least 12 characters"
+                required={!record}
+                type="password"
+                value={form.password}
+              />
+            </label>
+          </div>
+          <label className="active-toggle">
+            <input
+              checked={form.active}
+              onChange={(event) =>
+                setForm({ ...form, active: event.target.checked })
+              }
+              type="checkbox"
+            />
+            <span>
+              <strong>Active account</strong>
+              <small>Inactive users cannot sign in.</small>
+            </span>
+          </label>
+          <div className="role-information">
+            <ShieldCheck size={17} />
+            <p>{roleDescriptions[form.role]}</p>
+          </div>
+          {error && <p className="form-error">{error}</p>}
+        </div>
+        <footer>
+          <button className="real-secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="real-primary-button" disabled={saving} type="submit">
+            {saving ? (
+              <PromachLoader inline label="Saving user" size="small" />
+            ) : (
+              <Check size={16} />
+            )}
+            {saving ? "Saving user…" : record ? "Update user" : "Create user"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function DeleteUserDialog({
+  currentUserId,
+  onClose,
+  onDeleted,
+  user,
+}: {
+  currentUserId: string;
+  onClose: () => void;
+  onDeleted: (users: UserRecord[]) => void;
+  user: UserRecord;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+  const isCurrentUser = currentUserId === user.id;
+
+  async function remove() {
+    setDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json()) as
+        | { users: UserRecord[] }
+        | { error: string };
+      if (!response.ok || !("users" in payload)) {
+        throw new Error(
+          "error" in payload ? payload.error : "Unable to delete user.",
+        );
+      }
+      onDeleted(payload.users);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to delete user.",
+      );
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div
+      className="modal-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-user-title"
+    >
+      <button
+        aria-label="Close"
+        className="modal-scrim"
+        onClick={onClose}
+        type="button"
+      />
+      <section className="delete-master-dialog">
+        <span className="delete-dialog-icon">
+          <Trash2 size={22} />
+        </span>
+        <span>Access administration</span>
+        <h2 id="delete-user-title">Delete {user.name}?</h2>
+        <p>
+          This permanently removes the user account. Deactivation is preferable
+          when historical access should remain identifiable.
+        </p>
+        {isCurrentUser && (
+          <p className="form-error">You cannot delete your own account.</p>
+        )}
+        {error && <p className="form-error">{error}</p>}
+        <footer>
+          <button className="real-secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button
+            className="danger-button"
+            disabled={deleting || isCurrentUser}
+            onClick={() => void remove()}
+            type="button"
+          >
+            {deleting ? (
+              <PromachLoader inline label="Deleting user" size="small" />
+            ) : (
+              <Trash2 size={16} />
+            )}
+            {deleting ? "Deleting…" : "Delete user"}
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }
@@ -1710,7 +2779,7 @@ function MasterDataDialog({
           )}
           {error && <p className="form-error">{error}</p>}
         </div>
-        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{saving ? "Saving…" : record ? `Update ${singular}` : `Save ${singular}`}</button></footer>
+        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving} type="submit">{saving ? <PromachLoader inline label="Saving master record" size="small" /> : <Check size={16} />}{saving ? "Saving…" : record ? `Update ${singular}` : `Save ${singular}`}</button></footer>
       </form>
     </div>
   );
@@ -1767,7 +2836,7 @@ function DeleteMasterDialog({
         {error && <p className="form-error">{error}</p>}
         <footer>
           <button className="real-secondary-button" onClick={onClose} type="button">Cancel</button>
-          <button className="danger-button" disabled={deleting} onClick={() => void remove()} type="button">{deleting ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}{deleting ? "Deleting…" : "Delete record"}</button>
+          <button className="danger-button" disabled={deleting} onClick={() => void remove()} type="button">{deleting ? <PromachLoader inline label="Deleting master record" size="small" /> : <Trash2 size={16} />}{deleting ? "Deleting…" : "Delete record"}</button>
         </footer>
       </section>
     </div>
@@ -1775,6 +2844,7 @@ function DeleteMasterDialog({
 }
 
 function ReportDetail({
+  canOperate,
   company,
   report,
   onClose,
@@ -1782,15 +2852,32 @@ function ReportDetail({
   onSend,
   onSignHere,
 }: {
+  canOperate: boolean;
   company: CompanyProfile;
   report: WorkspaceReport;
   onClose: () => void;
-  onGenerate: (report: WorkspaceReport) => void;
-  onSend: (report: WorkspaceReport) => void;
+  onGenerate: (report: WorkspaceReport) => Promise<void>;
+  onSend: (report: WorkspaceReport) => Promise<void>;
   onSignHere: (report: WorkspaceReport) => void;
 }) {
   const [equipmentIndex, setEquipmentIndex] = useState(0);
+  const [actionLoading, setActionLoading] = useState<
+    "send" | "download" | null
+  >(null);
   const equipment = report.equipment[equipmentIndex];
+  const reportImages = report.images ?? [];
+
+  async function runAction(
+    action: "send" | "download",
+    callback: () => Promise<void>,
+  ) {
+    setActionLoading(action);
+    try {
+      await callback();
+    } finally {
+      setActionLoading(null);
+    }
+  }
   return (
     <div className="detail-layer" role="dialog" aria-modal="true" aria-labelledby="detail-title">
       <button className="detail-scrim" aria-label="Close report" onClick={onClose} type="button" />
@@ -1803,12 +2890,48 @@ function ReportDetail({
           <StatusBadge status={report.status} />
           <span className={`real-status ${report.condition === "Follow-up required" ? "follow" : ""}`}>{report.condition === "Follow-up required" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{report.condition}</span>
           <span />
-          {report.status === "Draft" && <button className="action-link-button" onClick={() => onSend(report)} type="button"><Send size={16} /> Send to client</button>}
-          {report.status === "Awaiting client signature" && <button className="action-link-button" onClick={() => onSend(report)} type="button"><Link2 size={16} /> New client link</button>}
-          {report.status === "Awaiting client signature" && <button className="real-primary-button" onClick={() => onSignHere(report)} type="button"><Signature size={16} /> Sign on this device</button>}
-          {report.status === "Completed" && <button className="real-primary-button" onClick={() => onGenerate(report)} type="button"><Download size={16} /> Signed PDF</button>}
+          {canOperate && report.status === "Draft" && <button className="action-link-button" disabled={actionLoading !== null} onClick={() => void runAction("send", () => onSend(report))} type="button">{actionLoading === "send" ? <PromachLoader inline label="Preparing client link" size="small" /> : <Send size={16} />} {actionLoading === "send" ? "Preparing link…" : "Send to client"}</button>}
+          {canOperate && report.status === "Awaiting client signature" && <button className="action-link-button" disabled={actionLoading !== null} onClick={() => void runAction("send", () => onSend(report))} type="button">{actionLoading === "send" ? <PromachLoader inline label="Preparing client link" size="small" /> : <Link2 size={16} />} {actionLoading === "send" ? "Preparing link…" : "New client link"}</button>}
+          {canOperate && report.status === "Awaiting client signature" && <button className="real-primary-button" onClick={() => onSignHere(report)} type="button"><Signature size={16} /> Sign on this device</button>}
+          {report.status === "Completed" && <button className="real-primary-button" disabled={actionLoading !== null} onClick={() => void runAction("download", () => onGenerate(report))} type="button">{actionLoading === "download" ? <PromachLoader inline label="Generating report" size="small" /> : <Download size={16} />} {actionLoading === "download" ? "Generating…" : "Download signed report"}</button>}
         </div>
         <div className="detail-scroll">
+          {!!reportImages.length && (
+            <section className="report-image-panel" aria-labelledby="report-images-title">
+              <header>
+                <div>
+                  <Images size={18} />
+                  <div>
+                    <h3 id="report-images-title">Service images</h3>
+                    <p>Photographic evidence attached to this report.</p>
+                  </div>
+                </div>
+                <span>{reportImages.length} image{reportImages.length === 1 ? "" : "s"}</span>
+              </header>
+              <div className="report-image-grid">
+                {reportImages.map((image, index) => {
+                  const linkedEquipment = report.equipment.find(
+                    (item) => item.id === image.equipmentId,
+                  );
+                  return (
+                    <figure key={image.id}>
+                      <Image
+                        alt={image.caption || `Service image ${index + 1}`}
+                        height={180}
+                        src={image.dataUrl}
+                        unoptimized
+                        width={280}
+                      />
+                      <figcaption>
+                        <strong>{image.caption || `Service image ${index + 1}`}</strong>
+                        <span>{linkedEquipment?.name ?? "General service evidence"}</span>
+                      </figcaption>
+                    </figure>
+                  );
+                })}
+              </div>
+            </section>
+          )}
           <section className="report-identity">
             <div className="identity-mark">
               <Image
@@ -1918,7 +3041,7 @@ function AdminSignatureDialog({
           <label className="signature-consent"><input checked={consent} onChange={(event) => setConsent(event.target.checked)} type="checkbox" /><span>I confirm that the service work in report #{report.id} has been completed to our satisfaction and I agree to this digital acknowledgement.</span></label>
           {error && <p className="form-error">{error}</p>}
         </div>
-        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving || !signatureDataUrl || !consent} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Signature size={16} />}{saving ? "Completing report…" : "Sign and complete report"}</button></footer>
+        <footer><button className="real-secondary-button" onClick={onClose} type="button">Cancel</button><button className="real-primary-button" disabled={saving || !signatureDataUrl || !consent} type="submit">{saving ? <PromachLoader inline label="Completing report" size="small" /> : <Signature size={16} />}{saving ? "Completing report…" : "Sign and complete report"}</button></footer>
       </form>
     </div>
   );

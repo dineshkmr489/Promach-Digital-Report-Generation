@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { LoginForm } from "./LoginForm";
 
 export const metadata: Metadata = {
-  title: "Administrator sign in | Promach DSR",
-  description: "Secure administrator access to Promach Digital Service Reports.",
+  title: "Secure sign in | Promach DSR",
+  description: "Secure role-based access to Promach Digital Service Reports.",
 };
 
 export const dynamic = "force-dynamic";
