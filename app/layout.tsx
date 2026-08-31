@@ -1,13 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
-
-const appFont = Inter({
-  variable: "--font-body",
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -52,7 +45,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#12382e",
+  themeColor: "#062f6f",
 };
 
 export default function RootLayout({
@@ -62,7 +55,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={appFont.variable}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

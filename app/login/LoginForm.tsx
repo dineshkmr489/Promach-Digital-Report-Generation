@@ -67,10 +67,10 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
             <span className="login-brand-mark">
               <Image
                 alt="Promach"
-                height={52}
+                fill
                 priority
+                sizes="57px"
                 src="/brand/promach-logo.png"
-                width={57}
               />
             </span>
             <div>

@@ -1,4 +1,12 @@
-import { company, serviceReports } from "./reportData.ts";
+import {
+  ahuChecklistItems,
+  company,
+  cracChecklistItems,
+  fcuChecklistItems,
+  sampleAhuMeasurements,
+  sampleFcuMeasurements,
+  serviceReports,
+} from "./reportData.ts";
 import type {
   AuditEvent,
   ChecklistTemplateRecord,
@@ -13,151 +21,277 @@ import type {
 
 const clients: ClientRecord[] = [
   {
-    id: "client-cgh",
-    name: "Changi General Hospital",
-    contactName: "Not recorded",
-    email: "",
-    phone: "",
-    address: "2 Simei Street 3, Singapore 529889",
+    id: "client-paragon",
+    name: "Paragon Shopping Mall",
+    contactName: "Mr. John Tan",
+    email: "facilities@paragon.sg",
+    phone: "6738 5535",
+    address: "290 Orchard Road, Singapore 238859",
     active: true,
   },
   {
     id: "client-tuas-power",
     name: "Tuas Power Generation Pte. Ltd.",
-    contactName: "Nasir Bin Abdul Majid",
-    email: "",
-    phone: "",
+    contactName: "Mr. Nasir Bin Abdul Majid",
+    email: "nasir@tuaspower.com.sg",
+    phone: "6838 6700",
     address: "60 Tuas South Avenue 9, Singapore 637607",
+    active: true,
+  },
+  {
+    id: "client-singtel-nxera",
+    name: "Singtel Nxera Pte Ltd",
+    contactName: "Data Centre Facilities Team",
+    email: "dc-ops@singtel.com",
+    phone: "6838 3388",
+    address: "DC West / KC1 / KC2, Singapore",
+    active: true,
+  },
+  {
+    id: "client-cgh",
+    name: "Changi General Hospital",
+    contactName: "Estates & Facilities Management",
+    email: "facilities@cgh.com.sg",
+    phone: "6788 8833",
+    address: "2 Simei Street 3, Singapore 529889",
     active: true,
   },
 ];
 
 const locations: LocationRecord[] = [
   {
-    id: "location-cgh-pharmacy",
-    clientId: "client-cgh",
-    name: "MB Building - Pharmacy",
-    address: "Level 1 Pharmacy, MB Building",
+    id: "location-paragon-main",
+    clientId: "client-paragon",
+    name: "Paragon Commercial Complex",
+    address: "290 Orchard Road, Singapore 238859",
+    building: "Main Tower",
+    room: "Level 1 / Room 101",
     active: true,
   },
   {
-    id: "location-tuas-fcb",
+    id: "location-tuas-ccp5",
     clientId: "client-tuas-power",
-    name: "Fan Control Building",
+    name: "Tuas Power Plant (CCP 5)",
     address: "60 Tuas South Avenue 9, Singapore 637607",
+    building: "Control Building",
+    room: "Mechanical Room L2",
+    active: true,
+  },
+  {
+    id: "location-singtel-dcwest",
+    clientId: "client-singtel-nxera",
+    name: "DC West / KC1 Data Center",
+    address: "31 International Business Park, Singapore 609921",
+    building: "Data Hall 1",
+    room: "CRAC Room L1",
+    active: true,
+  },
+  {
+    id: "location-cgh-pharmacy",
+    clientId: "client-cgh",
+    name: "MB Building - Pharmacy",
+    address: "2 Simei Street 3, Singapore 529889",
+    building: "MB Building",
+    room: "Level 1 Pharmacy",
     active: true,
   },
 ];
 
 const checklistTemplates: ChecklistTemplateRecord[] = [
   {
-    id: "template-ahu-cgh",
-    name: "AHU preventive service",
+    id: "template-fcu-monthly",
+    name: "FCU Monthly Maintenance Checklist",
+    equipmentType: "Fan Coil Unit",
+    frequency: "Monthly",
+    items: fcuChecklistItems.map((i) => i.item),
+    measurements: sampleFcuMeasurements.map(({ label, unit, min, max, category }) => ({
+      label,
+      unit,
+      min,
+      max,
+      category,
+    })),
+    active: true,
+  },
+  {
+    id: "template-ahu-quarterly",
+    name: "AHU Quarterly Maintenance Checklist",
     equipmentType: "Air Handling Unit",
-    items: serviceReports[0].equipment[0].checklist,
-    measurements: serviceReports[0].equipment[0].measurements.map(
-      ({ label, unit }) => ({ label, unit }),
-    ),
+    frequency: "Quarterly",
+    items: ahuChecklistItems.map((i) => i.item),
+    measurements: sampleAhuMeasurements.map(({ label, unit, min, max, category }) => ({
+      label,
+      unit,
+      min,
+      max,
+      category,
+    })),
     active: true,
   },
   {
-    id: "template-precool",
-    name: "Pre-cool unit service",
-    equipmentType: "Pre-cool Unit",
-    items: serviceReports[0].equipment[1].checklist,
-    measurements: serviceReports[0].equipment[1].measurements.map(
-      ({ label, unit }) => ({ label, unit }),
-    ),
-    active: true,
-  },
-  {
-    id: "template-air-curtain",
-    name: "Air curtain service",
-    equipmentType: "Air Curtain",
-    items: serviceReports[0].equipment[2].checklist,
-    measurements: [],
-    active: true,
-  },
-  {
-    id: "template-dx-ahu",
-    name: "DX AHU DLP service",
-    equipmentType: "Air Handling Unit",
-    items: serviceReports[1].equipment[0].checklist,
-    measurements: serviceReports[1].equipment[0].measurements.map(
-      ({ label, unit }) => ({ label, unit }),
-    ),
+    id: "template-crac-pm",
+    name: "CRAC / Precision AC Maintenance Checklist",
+    equipmentType: "CRAC / Precision AC",
+    frequency: "Monthly",
+    items: cracChecklistItems.map((i) => i.item),
+    measurements: [
+      { label: "Supply Air Temperature", unit: "°C", min: 18.0, max: 24.0, category: "air" },
+      { label: "Return Air Temperature", unit: "°C", min: 20.0, max: 27.0, category: "air" },
+      { label: "Return Relative Humidity", unit: "% RH", min: 40, max: 60, category: "air" },
+      { label: "Supply Static Pressure", unit: "Pa", min: 80, max: 150, category: "air" },
+      { label: "Fan Motor Current", unit: "A", min: 2.0, max: 4.5, category: "motor" },
+      { label: "Voltage (R-Y / Y-B / B-R)", unit: "V", min: 380, max: 415, category: "motor" },
+      { label: "Frequency", unit: "Hz", min: 49, max: 51, category: "motor" },
+    ],
     active: true,
   },
 ];
 
-function templateForEquipment(id: string): string {
-  if (id === "CGH-AHU-L2-10") return "template-ahu-cgh";
-  if (id === "CGH-PFCU-L2-3-1") return "template-precool";
-  if (id === "TPG-DX-AHU-15") return "template-dx-ahu";
-  return "template-air-curtain";
-}
-
-const equipment: EquipmentRecord[] = serviceReports.flatMap(
-  (report, reportIndex) =>
-    report.equipment.map((item) => ({
-      id: item.id,
-      clientId: reportIndex === 0 ? "client-cgh" : "client-tuas-power",
-      locationId:
-        reportIndex === 0 ? "location-cgh-pharmacy" : "location-tuas-fcb",
-      name: item.name,
-      type: item.type,
-      brand: item.brand,
-      model: item.model,
-      serial: item.serial,
-      checklistTemplateId: templateForEquipment(item.id),
-      active: true,
-    })),
-);
+const equipment: EquipmentRecord[] = [
+  {
+    id: "PAR-FCU-101",
+    clientId: "client-paragon",
+    locationId: "location-paragon-main",
+    name: "FCU-101",
+    tagNo: "FCU-101",
+    type: "Fan Coil Unit",
+    category: "FCU",
+    brand: "Daikin",
+    model: "FXMQ20PAVE",
+    serial: "R123456",
+    room: "Room 101",
+    capacity: "2.0 TR",
+    motorType: "Three Phase",
+    voltageFrequency: "380-415 V / 50 Hz",
+    installDate: "2021-01-10",
+    assetNo: "ASSET-ACMV-FCU-0001",
+    maintenanceFrequency: "Monthly",
+    checklistTemplateId: "template-fcu-monthly",
+    active: true,
+  },
+  {
+    id: "PAR-FCU-102",
+    clientId: "client-paragon",
+    locationId: "location-paragon-main",
+    name: "FCU-102",
+    tagNo: "FCU-102",
+    type: "Fan Coil Unit",
+    category: "FCU",
+    brand: "Daikin",
+    model: "FXMQ20PAVE",
+    serial: "R123457",
+    room: "Room 102",
+    capacity: "2.0 TR",
+    motorType: "Three Phase",
+    voltageFrequency: "380-415 V / 50 Hz",
+    installDate: "2021-01-10",
+    assetNo: "ASSET-ACMV-FCU-0002",
+    maintenanceFrequency: "Monthly",
+    checklistTemplateId: "template-fcu-monthly",
+    active: true,
+  },
+  {
+    id: "PAR-FCU-103",
+    clientId: "client-paragon",
+    locationId: "location-paragon-main",
+    name: "FCU-103",
+    tagNo: "FCU-103",
+    type: "Fan Coil Unit",
+    category: "FCU",
+    brand: "Daikin",
+    model: "FXMQ20PAVE",
+    serial: "R123458",
+    room: "Room 103",
+    capacity: "2.0 TR",
+    motorType: "Three Phase",
+    voltageFrequency: "380-415 V / 50 Hz",
+    installDate: "2021-01-10",
+    assetNo: "ASSET-ACMV-FCU-0003",
+    maintenanceFrequency: "Monthly",
+    checklistTemplateId: "template-fcu-monthly",
+    active: true,
+  },
+  {
+    id: "TP-AHU-5-01",
+    clientId: "client-tuas-power",
+    locationId: "location-tuas-ccp5",
+    name: "AHU-CCP 5",
+    tagNo: "AHU-5-01",
+    type: "Air Handling Unit",
+    category: "AHU",
+    brand: "TRANE",
+    model: "AHU-1860",
+    serial: "1860-TR-2019-00123",
+    room: "Mechanical Room L2",
+    capacity: "18,000 CMH",
+    motorType: "Three Phase",
+    voltageFrequency: "380-415 V / 50 Hz",
+    installDate: "2019-05-15",
+    assetNo: "TP-ACMV-AHU-0501",
+    maintenanceFrequency: "Quarterly",
+    checklistTemplateId: "template-ahu-quarterly",
+    active: true,
+  },
+  {
+    id: "ST-CRAC-01",
+    clientId: "client-singtel-nxera",
+    locationId: "location-singtel-dcwest",
+    name: "CRAC-01 (Data Hall 1)",
+    tagNo: "CRAC-01",
+    type: "CRAC / Precision AC",
+    category: "CRAC",
+    brand: "Vertiv Liebert",
+    model: "PEX4",
+    serial: "VRT-2022-0988",
+    room: "CRAC Room L1",
+    capacity: "65 kW",
+    motorType: "Three Phase",
+    voltageFrequency: "400 V / 50 Hz",
+    installDate: "2022-03-20",
+    assetNo: "NXERA-CRAC-001",
+    maintenanceFrequency: "Monthly",
+    checklistTemplateId: "template-crac-pm",
+    active: true,
+  },
+];
 
 const technicianSeed = [
-  ["tech-kabilan", "Kabilan"],
-  ["tech-manimuthu", "Manimuthu"],
-  ["tech-karthi", "Karthi"],
-  ["tech-arun", "Arun"],
-  ["tech-marimuthu", "Marimuthu"],
+  ["tech-ramesh", "Ramesh Kumar", "Lead ACMV Technician", "ramesh@promachpl.com", "+65 9123 4567"],
+  ["tech-suresh", "K. Suresh", "Senior Aircon Specialist", "suresh@promachpl.com", "+65 9234 5678"],
+  ["tech-arjun", "Arjun Prasad", "Field Service Engineer", "arjun@promachpl.com", "+65 9345 6789"],
+  ["tech-sridhar", "Sridhar M.", "ACMV Supervisor", "sridhar@promachpl.com", "+65 9456 7890"],
+  ["tech-kumar", "M. Kumar", "Operations Supervisor", "kumar@promachpl.com", "+65 9567 8901"],
 ] as const;
 
-const technicians: TechnicianRecord[] = technicianSeed.map(([id, name]) => ({
+const technicians: TechnicianRecord[] = technicianSeed.map(([id, name, designation, email, phone]) => ({
   id,
   name,
-  designation: "Service Technician",
-  email: "",
-  phone: "",
+  designation,
+  email,
+  phone,
   active: true,
 }));
 
 const serviceTypes: ServiceTypeRecord[] = [
   {
-    id: "service-type-regular",
-    name: "Regular Service",
-    description: "Planned or recurring service visit.",
+    id: "service-type-monthly",
+    name: "Monthly Maintenance",
+    description: "Standard monthly comprehensive ACMV maintenance service.",
     active: true,
   },
   {
-    id: "service-type-warranty",
-    name: "Warranty Service",
-    description: "Service work performed under warranty.",
+    id: "service-type-quarterly",
+    name: "Quarterly Maintenance",
+    description: "Quarterly inspection, coil washing, and major parameter tests.",
     active: true,
   },
   {
-    id: "service-type-complaints",
-    name: "Complaints",
-    description: "Customer complaint or breakdown attendance.",
+    id: "service-type-corrective",
+    name: "Corrective / Breakdown",
+    description: "Breakdown troubleshooting, parts replacement, and repair.",
     active: true,
   },
 ];
-
-function technicianId(name: string): string {
-  return (
-    technicianSeed.find(([, technicianName]) => technicianName === name)?.[0] ??
-    ""
-  );
-}
 
 function completedReportAudit(
   reportId: string,
@@ -172,42 +306,41 @@ function completedReportAudit(
       actorName: "Promach Admin",
       channel: "admin_portal",
       createdAt: date,
-      detail: "Completed service report added to the workspace.",
+      detail: "Completed service report registered in Singapore PDMS system.",
     },
     {
       id: `audit-${reportId}-signed`,
       reportId,
-      action: "Customer acknowledgement recorded",
+      action: "Client Representative Signed",
       actorName,
       channel: "admin_device",
       createdAt: date,
-      detail: "Customer acknowledgement recorded and report locked.",
+      detail: "Client acknowledgement recorded and report locked.",
     },
   ];
 }
 
 const reports: WorkspaceReport[] = serviceReports.map((report, index) => {
-  const clientId = index === 0 ? "client-cgh" : "client-tuas-power";
-  const locationId =
-    index === 0 ? "location-cgh-pharmacy" : "location-tuas-fcb";
-  const isoDate = index === 0 ? "2026-07-18T00:00:00.000Z" : "2026-07-23T00:00:00.000Z";
+  const clientId = index === 0 ? "client-tuas-power" : "client-paragon";
+  const locationId = index === 0 ? "location-tuas-ccp5" : "location-paragon-main";
+  const isoDate = "2026-07-28T03:45:00.000Z";
 
   return {
     ...report,
     status: "Completed",
     clientId,
     locationId,
-    technicianIds: report.technicians.map(technicianId).filter(Boolean),
+    technicianIds: ["tech-ramesh", "tech-suresh"],
     createdAt: isoDate,
-    sentAt: null,
+    sentAt: "2026-07-28T04:15:00.000Z",
     signature: {
       signerName: report.acknowledgement.name,
-      signerEmail: "",
+      signerEmail: "representative@client.sg",
       designation: report.acknowledgement.designation,
       signedAt: isoDate,
       channel: "admin_device",
       dataUrl: null,
-      consentText: "Customer acknowledgement recorded in Promach DSR.",
+      consentText: "Service acknowledgement confirmed in accordance with BCA & bizSAFE standards.",
     },
     auditTrail: completedReportAudit(
       report.id,
@@ -237,9 +370,11 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
       equipment: report.equipment.map((item) => ({
         ...item,
         checklist: [...item.checklist],
+        checklistResults: item.checklistResults ? [...item.checklistResults] : undefined,
         measurements: item.measurements.map((measurement) => ({
           ...measurement,
         })),
+        spareParts: item.spareParts ? [...item.spareParts] : undefined,
       })),
       images: (report.images ?? []).map((image) => ({ ...image })),
       workPerformed: [...report.workPerformed],

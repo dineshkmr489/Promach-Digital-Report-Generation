@@ -6,23 +6,20 @@ import {
 } from "./reportData.ts";
 
 const pageWidth = 210;
-const pageHeight = 297;
-const margin = 14;
-const contentBottom = pageHeight - 31;
-const contentWidth = pageWidth - margin * 2; // 182mm
+const margin = 10;
+const contentWidth = pageWidth - margin * 2; // 190mm
 
-const forest: [number, number, number] = [18, 56, 46]; // #12382e
-const green: [number, number, number] = [35, 110, 82]; // #236e52
-const brandNavy: [number, number, number] = [37, 43, 91];
-const brandRed: [number, number, number] = [211, 58, 45];
-const ink: [number, number, number] = [24, 53, 46]; // #18352e
-const muted: [number, number, number] = [96, 116, 109]; // #60746d
-const line: [number, number, number] = [218, 227, 222]; // #dae3de
-const soft: [number, number, number] = [246, 249, 247]; // #f6f9f7
-const borderSoft: [number, number, number] = [228, 235, 231];
-const amber: [number, number, number] = [180, 100, 10]; // #b4640a
-const amberBg: [number, number, number] = [254, 248, 238];
-const amberLine: [number, number, number] = [243, 210, 162];
+const brandNavy: [number, number, number] = [26, 43, 76]; // #1a2b4c
+const brandHeaderBg: [number, number, number] = [24, 43, 73]; // #182b49
+const brandRed: [number, number, number] = [211, 47, 47];
+const brandGreen: [number, number, number] = [46, 125, 50];
+const lightGreenBg: [number, number, number] = [232, 245, 233];
+const lightRedBg: [number, number, number] = [255, 235, 238];
+const textDark: [number, number, number] = [33, 33, 33];
+const textMuted: [number, number, number] = [100, 116, 139];
+const tableBorder: [number, number, number] = [203, 213, 225];
+const tableHeaderBg: [number, number, number] = [241, 245, 249];
+const tableRowAltBg: [number, number, number] = [248, 250, 252];
 
 export type PdfBrandAssets = {
   promachLogo: string | null;
@@ -74,7 +71,7 @@ export function loadPdfBrandAssets(): Promise<PdfBrandAssets> {
   return browserBrandAssets;
 }
 
-function clean(value: string): string {
+function clean(value: string | undefined | null): string {
   if (!value) return "";
   return value
     .replaceAll("–", "-")
@@ -85,683 +82,608 @@ function clean(value: string): string {
     .replaceAll("°", " deg ");
 }
 
-function signedTime(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return clean(value);
-  return new Intl.DateTimeFormat("en-SG", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Asia/Singapore",
-    timeZoneName: "short",
-  }).format(parsed);
-}
-
-function addPageHeader(
-  doc: jsPDF,
-  report: ServiceReport,
-  assets: PdfBrandAssets,
-  company: CompanyProfile,
-) {
-  doc.setFillColor(255, 255, 255);
-  doc.rect(0, 0, pageWidth, 41, "F");
-
-  if (assets.promachLogo) {
-    doc.addImage(assets.promachLogo, "PNG", margin, 5.2, 19.1, 17.5);
-  } else {
-    doc.setFillColor(...brandNavy);
-    doc.roundedRect(margin, 6, 17, 16, 2, 2, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text("PM", margin + 8.5, 16.6, { align: "center" });
-  }
-
-  if (assets.contractorMarks) {
-    doc.addImage(
-      assets.contractorMarks,
-      "PNG",
-      pageWidth - margin - 29,
-      6.4,
-      29,
-      11.9,
-    );
-  }
-
-  const companyCenter = 102;
-  doc.setTextColor(...brandNavy);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16.5);
-  doc.text(company.name, companyCenter, 10.8, { align: "center" });
-
-  doc.setTextColor(42, 42, 42);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.7);
-  doc.text(clean(company.address), companyCenter, 15.4, { align: "center" });
-  doc.setFontSize(6.4);
-  doc.text(
-    `Tel: ${company.phone}, E-mail: ${company.email}, Website: ${company.website}`,
-    companyCenter,
-    19.2,
-    { align: "center" },
-  );
-  doc.setFontSize(6.2);
-  doc.text(company.registration, companyCenter, 22.9, { align: "center" });
-
-  doc.setDrawColor(...brandNavy);
-  doc.setLineWidth(0.55);
-  doc.line(margin, 28.2, pageWidth - margin, 28.2);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.setTextColor(...brandNavy);
-  doc.text("SERVICE REPORT / DELIVERY ORDER", margin, 34.3);
-
-  doc.setFontSize(6.6);
-  doc.setTextColor(...muted);
-  doc.text("REPORT NO.", pageWidth - margin - 22, 32.3, { align: "right" });
-  doc.setFontSize(13.5);
-  doc.setTextColor(...brandRed);
-  doc.text(report.id, pageWidth - margin, 35.8, { align: "right" });
-
-  doc.setDrawColor(...line);
-  doc.setLineWidth(0.25);
-  doc.line(margin, 38.6, pageWidth - margin, 38.6);
-}
-
-function addFooter(
-  doc: jsPDF,
-  report: ServiceReport,
-  assets: PdfBrandAssets,
-) {
-  const pages = doc.getNumberOfPages();
-  const dateStr = new Date().toLocaleDateString("en-SG", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-  for (let page = 1; page <= pages; page += 1) {
-    doc.setPage(page);
-    doc.setFillColor(255, 255, 255);
-    doc.rect(0, pageHeight - 29.5, pageWidth, 29.5, "F");
-
-    doc.setDrawColor(...brandNavy);
-    doc.setLineWidth(0.3);
-    doc.line(margin, pageHeight - 28.3, pageWidth - margin, pageHeight - 28.3);
-
-    if (assets.certificationStrip) {
-      doc.addImage(
-        assets.certificationStrip,
-        "PNG",
-        margin,
-        pageHeight - 26.9,
-        contentWidth,
-        19.45,
-      );
-    } else {
-      doc.setTextColor(...brandNavy);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(6.1);
-      doc.text(
-        "ISO 9001 | ISO 37001 | ISO 14001 | ISO 45001 | bizSAFE STAR",
-        margin,
-        pageHeight - 16.5,
-      );
-    }
-
-    doc.setTextColor(105, 105, 105);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(5.6);
-    doc.text(
-      `Promach DSR  |  Report ${report.id}  |  Generated ${dateStr}`,
-      margin,
-      pageHeight - 3.3,
-    );
-    doc.text(`Page ${page} of ${pages}`, pageWidth - margin, pageHeight - 3.3, {
-      align: "right",
-    });
-  }
-}
-
-function sectionTitle(doc: jsPDF, title: string, y: number): number {
-  doc.setFillColor(...forest);
-  doc.roundedRect(margin, y, contentWidth, 7.5, 1.5, 1.5, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.text(clean(title).toUpperCase(), margin + 4, y + 5.1);
-  return y + 11.5;
-}
-
-function ensureSpace(
-  doc: jsPDF,
-  report: ServiceReport,
-  assets: PdfBrandAssets,
-  company: CompanyProfile,
-  y: number,
-  needed: number,
-): number {
-  if (y + needed <= contentBottom) return y;
-  doc.addPage();
-  addPageHeader(doc, report, assets, company);
-  return 43;
-}
-
-function renderLabelValue(
-  doc: jsPDF,
-  label: string,
-  value: string,
-  x: number,
-  y: number,
-  width: number,
-): number {
-  doc.setTextColor(...muted);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.8);
-  doc.text(label.toUpperCase(), x, y);
-
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.8);
-  const lines = doc.splitTextToSize(clean(value), width);
-  doc.text(lines, x, y + 4.8);
-  return lines.length * 4.2 + 5.2;
-}
-
-function addEquipment(
-  doc: jsPDF,
-  report: ServiceReport,
-  assets: PdfBrandAssets,
-  company: CompanyProfile,
-  equipment: EquipmentService,
-  startY: number,
-): number {
-  // Estimate height needed for header + specs card + initial checklist items
-  const estChecklistHeight = Math.min(equipment.checklist.length, 3) * 8.5;
-  const initialNeeded = 38 + estChecklistHeight;
-  let y = ensureSpace(doc, report, assets, company, startY, initialNeeded);
-
-  y = sectionTitle(doc, `${equipment.name} - ${equipment.type}`, y);
-
-  // Specs card column widths: Brand(32mm), Model(42mm), Serial(42mm), Location(54mm)
-  const colX = [
-    margin + 4,
-    margin + 38,
-    margin + 82,
-    margin + 126,
-  ];
-  const colW = [32, 42, 42, 50];
-
-  const brandLines = doc.splitTextToSize(clean(equipment.brand), colW[0]);
-  const modelLines = doc.splitTextToSize(clean(equipment.model), colW[1]);
-  const serialLines = doc.splitTextToSize(clean(equipment.serial), colW[2]);
-  const locLines = doc.splitTextToSize(clean(equipment.location), colW[3]);
-
-  const maxLines = Math.max(
-    brandLines.length,
-    modelLines.length,
-    serialLines.length,
-    locLines.length,
-  );
-  const cardHeight = Math.max(16, maxLines * 4.2 + 9);
-
-  doc.setFillColor(...soft);
-  doc.setDrawColor(...borderSoft);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(margin, y, contentWidth, cardHeight, 2, 2, "FD");
-
-  renderLabelValue(doc, "Brand", equipment.brand, colX[0], y + 5, colW[0]);
-  renderLabelValue(doc, "Model", equipment.model, colX[1], y + 5, colW[1]);
-  renderLabelValue(doc, "Serial", equipment.serial, colX[2], y + 5, colW[2]);
-  renderLabelValue(doc, "Location", equipment.location, colX[3], y + 5, colW[3]);
-
-  y += cardHeight + 4.5;
-
-  // Checklist section header
-  y = ensureSpace(doc, report, assets, company, y, 14);
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.2);
-  doc.text("Checklist results", margin, y);
-  y += 4.5;
-
-  for (const [itemIndex, item] of equipment.checklist.entries()) {
-    const result = equipment.checklistResults?.[itemIndex]?.result ?? "YES";
-    const textWidth = contentWidth - 23; // 159mm
-    const lines = doc.splitTextToSize(clean(item), textWidth);
-    const rowHeight = Math.max(7.2, lines.length * 3.8 + 3.2);
-
-    y = ensureSpace(doc, report, assets, company, y, rowHeight + 2);
-
-    // Row card
-    doc.setFillColor(...soft);
-    doc.setDrawColor(...borderSoft);
-    doc.setLineWidth(0.25);
-    doc.roundedRect(margin, y, contentWidth, rowHeight, 1.5, 1.5, "FD");
-
-    // "YES" Badge - fixed compact pill height (5.2mm) perfectly centered vertically
-    const badgeW = 14;
-    const badgeH = 5.2;
-    const badgeY = y + (rowHeight - badgeH) / 2;
-
-    const resultColor = result === "YES" ? green : result === "NO" ? amber : muted;
-    doc.setFillColor(...resultColor);
-    doc.roundedRect(margin + 2.5, badgeY, badgeW, badgeH, 1.2, 1.2, "F");
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.text(result, margin + 2.5 + badgeW / 2, badgeY + 3.6, {
-      align: "center",
-    });
-
-    // Item text
-    doc.setTextColor(...ink);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.8);
-    const textY = y + (rowHeight - lines.length * 3.6) / 2 + 2.8;
-    doc.text(lines, margin + 20, textY);
-
-    y += rowHeight + 2;
-  }
-
-  // Measurements section
-  if (equipment.measurements.length > 0) {
-    const rows = Math.ceil(equipment.measurements.length / 3);
-    const needed = 8 + rows * 16.5;
-    y = ensureSpace(doc, report, assets, company, y + 2, needed);
-
-    doc.setTextColor(...ink);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.2);
-    doc.text("Measurements", margin, y);
-    y += 4.5;
-
-    const cardW = (contentWidth - 6) / 3; // ~58.6mm per card
-    const cardH = 14;
-
-    equipment.measurements.forEach((m, idx) => {
-      const col = idx % 3;
-      const row = Math.floor(idx / 3);
-      const cardX = margin + col * (cardW + 3);
-      const cardY = y + row * (cardH + 2.5);
-
-      doc.setFillColor(...soft);
-      doc.setDrawColor(...borderSoft);
-      doc.setLineWidth(0.25);
-      doc.roundedRect(cardX, cardY, cardW, cardH, 1.5, 1.5, "FD");
-
-      doc.setTextColor(...muted);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.5);
-      doc.text(clean(m.label).toUpperCase(), cardX + 3.5, cardY + 4.6);
-
-      doc.setTextColor(...ink);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.8);
-      const valStr = clean(`${m.value}${m.unit ? ` ${m.unit}` : ""}`);
-      doc.text(valStr, cardX + 3.5, cardY + 10.4);
-    });
-
-    y += Math.ceil(equipment.measurements.length / 3) * 16.5 + 2;
-  }
-
-  // Equipment note banner
-  if (equipment.note) {
-    const isWarn = equipment.note.toLowerCase().includes("chemical") || equipment.note.toLowerCase().includes("dirty");
-    const noteColor = isWarn ? amber : green;
-    const noteBg = isWarn ? amberBg : soft;
-    const noteBorder = isWarn ? amberLine : borderSoft;
-
-    const lines = doc.splitTextToSize(
-      `Equipment note: ${clean(equipment.note)}`,
-      contentWidth - 8,
-    );
-    const bannerH = Math.max(9, lines.length * 4.0 + 4.5);
-
-    y = ensureSpace(doc, report, assets, company, y + 1, bannerH + 3);
-
-    doc.setFillColor(...noteBg);
-    doc.setDrawColor(...noteBorder);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(margin, y, contentWidth, bannerH, 1.5, 1.5, "FD");
-
-    doc.setTextColor(...noteColor);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.text(lines, margin + 4, y + 5.2);
-
-    y += bannerH + 4;
-  }
-
-  return y + 2;
-}
-
-function addServiceImages(
-  doc: jsPDF,
-  report: ServiceReport,
-  assets: PdfBrandAssets,
-  company: CompanyProfile,
-  startY: number,
-): number {
-  const images = report.images ?? [];
-  if (!images.length) return startY;
-
-  let y = ensureSpace(doc, report, assets, company, startY, 66);
-  y = sectionTitle(doc, "Service images", y);
-
-  for (const [index, image] of images.entries()) {
-    const rowHeight = 51;
-    y = ensureSpace(doc, report, assets, company, y, rowHeight + 4);
-    doc.setFillColor(...soft);
-    doc.setDrawColor(...borderSoft);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(margin, y, contentWidth, rowHeight, 2, 2, "FD");
-
-    const imageBoxX = margin + 3;
-    const imageBoxY = y + 3;
-    const imageBoxWidth = 70;
-    const imageBoxHeight = 45;
-    try {
-      const properties = doc.getImageProperties(image.dataUrl);
-      const scale = Math.min(
-        imageBoxWidth / properties.width,
-        imageBoxHeight / properties.height,
-      );
-      const renderedWidth = properties.width * scale;
-      const renderedHeight = properties.height * scale;
-      const format = image.dataUrl.startsWith("data:image/png")
-        ? "PNG"
-        : image.dataUrl.startsWith("data:image/webp")
-          ? "WEBP"
-          : "JPEG";
-      doc.addImage(
-        image.dataUrl,
-        format,
-        imageBoxX + (imageBoxWidth - renderedWidth) / 2,
-        imageBoxY + (imageBoxHeight - renderedHeight) / 2,
-        renderedWidth,
-        renderedHeight,
-      );
-    } catch {
-      doc.setFillColor(237, 243, 240);
-      doc.roundedRect(
-        imageBoxX,
-        imageBoxY,
-        imageBoxWidth,
-        imageBoxHeight,
-        1,
-        1,
-        "F",
-      );
-      doc.setTextColor(...muted);
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(7);
-      doc.text("Service image unavailable", imageBoxX + 5, imageBoxY + 23);
-    }
-
-    const textX = margin + 79;
-    const textWidth = contentWidth - 85;
-    doc.setTextColor(...green);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.7);
-    doc.text(`SERVICE IMAGE ${index + 1}`, textX, y + 8);
-
-    doc.setTextColor(...ink);
-    doc.setFontSize(9);
-    const captionLines = doc.splitTextToSize(
-      clean(image.caption || image.name || `Service image ${index + 1}`),
-      textWidth,
-    );
-    doc.text(captionLines, textX, y + 14);
-
-    const linkedEquipment = report.equipment.find(
-      (item) => item.id === image.equipmentId,
-    );
-    doc.setTextColor(...muted);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.text(
-      clean(linkedEquipment?.name ?? "General service evidence"),
-      textX,
-      y + 42,
-    );
-    y += rowHeight + 4;
-  }
-  return y + 2;
-}
-
 export async function buildServiceReportPdf(
   report: ServiceReport,
-  company: CompanyProfile,
-  providedAssets?: PdfBrandAssets,
+  companyProfile: CompanyProfile,
+  assets?: PdfBrandAssets,
 ): Promise<jsPDF> {
-  const assets = providedAssets ?? (await loadPdfBrandAssets());
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
     format: "a4",
-    compress: false,
   });
 
-  doc.setProperties({
-    title: `Promach Service Report ${report.id}`,
-    subject: `${report.client} - ${report.date}`,
-    author: company.name,
-    creator: "Promach Digital Service Reports",
+  const resolvedAssets = assets || (await loadPdfBrandAssets().catch(() => ({
+    promachLogo: null,
+    contractorMarks: null,
+    certificationStrip: null,
+  })));
+
+  const equipmentList = report.equipment.length > 0 ? report.equipment : [
+    {
+      id: "EQUIP-1",
+      name: "Equipment",
+      type: "ACMV Equipment",
+      brand: "Standard",
+      model: "Standard",
+      serial: "N/A",
+      location: report.address,
+      checklist: [],
+      measurements: [],
+      note: report.remarks,
+    } as EquipmentService,
+  ];
+
+  equipmentList.forEach((eq, eqIndex) => {
+    if (eqIndex > 0) doc.addPage();
+    renderEquipmentReportPage(doc, report, eq, resolvedAssets, companyProfile, eqIndex + 1, equipmentList.length);
   });
 
-  addPageHeader(doc, report, assets, company);
-  let y = 42;
-
-  // Header Details Card
-  const col1X = margin + 4;
-  const col2X = margin + 88;
-  const col3X = margin + 136;
-
-  const col1W = 78;
-  const col2W = 44;
-  const col3W = 42;
-
-  const clientLines = doc.splitTextToSize(clean(report.client), col1W);
-  const addrLines = doc.splitTextToSize(clean(report.address), col1W);
-
-  const row1H = Math.max(13, clientLines.length * 4.2 + 6);
-  const row2H = Math.max(13, addrLines.length * 4.2 + 6);
-  const infoCardH = row1H + row2H + 4;
-
-  doc.setFillColor(...soft);
-  doc.setDrawColor(...borderSoft);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(margin, y, contentWidth, infoCardH, 2.5, 2.5, "FD");
-
-  // Row 1
-  renderLabelValue(doc, "Customer", report.client, col1X, y + 5, col1W);
-  renderLabelValue(doc, "Report date", report.date, col2X, y + 5, col2W);
-  renderLabelValue(doc, "Status", report.status, col3X, y + 5, col3W);
-
-  // Row 2
-  const row2Y = y + row1H + 2;
-  renderLabelValue(doc, "Address / service location", report.address, col1X, row2Y, col1W);
-  renderLabelValue(doc, "Service month", report.serviceMonth, col2X, row2Y, col2W);
-  renderLabelValue(doc, "Service type", report.serviceType, col3X, row2Y, col3W);
-
-  y += infoCardH + 5;
-
-  // Service Summary Section
-  y = sectionTitle(doc, "Service summary", y);
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.2);
-  const summaryLines = doc.splitTextToSize(clean(report.summary), contentWidth);
-  doc.text(summaryLines, margin, y);
-  y += summaryLines.length * 4.0 + 4;
-
-  // Work performed
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.2);
-  doc.text("Work performed", margin, y);
-  y += 4.5;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.8);
-  for (const item of report.workPerformed) {
-    const lines = doc.splitTextToSize(`-  ${clean(item)}`, contentWidth);
-    y = ensureSpace(doc, report, assets, company, y, lines.length * 4.0 + 1);
-    doc.text(lines, margin, y);
-    y += lines.length * 4.0 + 1;
-  }
-  y += 5;
-
-  // Equipment Sections
-  for (const eq of report.equipment) {
-    y = addEquipment(doc, report, assets, company, eq, y);
-  }
-
-  y = addServiceImages(doc, report, assets, company, y);
-
-  // Completion and Acknowledgement
-  y = ensureSpace(doc, report, assets, company, y, 68);
-  y = sectionTitle(doc, "Completion and acknowledgement", y);
-
-  const ackCardH = 26;
-  doc.setFillColor(...soft);
-  doc.setDrawColor(...borderSoft);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(margin, y, contentWidth, ackCardH, 2, 2, "FD");
-
-  renderLabelValue(
-    doc,
-    "Completed by",
-    report.technicians.join(", "),
-    col1X,
-    y + 5,
-    78,
-  );
-  renderLabelValue(
-    doc,
-    "Acknowledged by",
-    report.acknowledgement.name,
-    col2X,
-    y + 5,
-    88,
-  );
-  renderLabelValue(
-    doc,
-    "Customer designation",
-    report.acknowledgement.designation,
-    col2X,
-    y + 16,
-    52,
-  );
-  renderLabelValue(
-    doc,
-    "Signed date",
-    report.acknowledgement.signedDate,
-    col3X,
-    y + 16,
-    42,
-  );
-
-  y += ackCardH + 5;
-
-  if (report.signature) {
-    const signature = report.signature;
-    const signatureHeight = signature.dataUrl ? 36 : 23;
-    y = ensureSpace(doc, report, assets, company, y, signatureHeight + 7);
-    doc.setFillColor(249, 251, 250);
-    doc.setDrawColor(...borderSoft);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(margin, y, contentWidth, signatureHeight, 2, 2, "FD");
-
-    if (signature.dataUrl) {
-      try {
-        doc.addImage(signature.dataUrl, "PNG", margin + 4, y + 4, 62, 21);
-      } catch {
-        doc.setTextColor(...muted);
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(7);
-        doc.text("Digital signature image unavailable", margin + 4, y + 14);
-      }
-    }
-
-    const metaX = signature.dataUrl ? margin + 72 : margin + 4;
-    renderLabelValue(
-      doc,
-      "Digital signer",
-      signature.signerName,
-      metaX,
-      y + 6,
-      signature.dataUrl ? 48 : 76,
-    );
-    renderLabelValue(
-      doc,
-      "Signing channel",
-      signature.channel === "client_portal"
-        ? "Secure client link"
-        : "Promach admin device",
-      metaX + (signature.dataUrl ? 52 : 82),
-      y + 6,
-      48,
-    );
-    renderLabelValue(
-      doc,
-      "Signed timestamp",
-      signedTime(signature.signedAt),
-      metaX,
-      y + (signature.dataUrl ? 19 : 17),
-      76,
-    );
-    y += signatureHeight + 5;
-  }
-
-  // Remarks
-  y = ensureSpace(doc, report, assets, company, y, 22);
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.2);
-  doc.text("Remarks", margin, y);
-  y += 4.5;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.8);
-  const remarksLines = doc.splitTextToSize(clean(report.remarks), contentWidth);
-  doc.text(remarksLines, margin, y);
-  y += remarksLines.length * 4.0 + 4;
-
-  // Follow-Up Banner
-  if (report.followUp && report.followUp !== "No follow-up recorded.") {
-    const followUpLines = doc.splitTextToSize(
-      `FOLLOW-UP: ${clean(report.followUp)}`,
-      contentWidth - 8,
-    );
-    const followH = Math.max(10, followUpLines.length * 4.2 + 5);
-
-    y = ensureSpace(doc, report, assets, company, y, followH + 4);
-
-    doc.setFillColor(...amberBg);
-    doc.setDrawColor(...amberLine);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(margin, y, contentWidth, followH, 2, 2, "FD");
-
-    doc.setTextColor(...amber);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text(followUpLines, margin + 4, y + 5.8);
-
-    y += followH + 5;
-  }
-
-  addFooter(doc, report, assets);
   return doc;
 }
 
 export async function downloadServiceReportPdf(
   report: ServiceReport,
-  company: CompanyProfile,
+  companyProfile: CompanyProfile,
+  storageEndpoint: string | null = `/api/reports/${encodeURIComponent(report.id)}/pdf`,
+): Promise<void> {
+  const doc = await buildServiceReportPdf(report, companyProfile);
+  const filename = `${report.id || "Service-Report"}.pdf`;
+  if (storageEndpoint) {
+    const response = await fetch(storageEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/pdf" },
+      body: doc.output("arraybuffer"),
+    });
+    if (!response.ok) {
+      throw new Error("The PDF could not be stored in the report repository.");
+    }
+  }
+  doc.save(filename);
+}
+
+function renderEquipmentReportPage(
+  doc: jsPDF,
+  report: ServiceReport,
+  eq: EquipmentService,
+  assets: PdfBrandAssets,
+  companyProfile: CompanyProfile,
+  pageNo: number,
+  totalPages: number,
 ) {
-  const doc = await buildServiceReportPdf(report, company);
-  doc.save(`Promach-Service-Report-${report.id}.pdf`);
+  let y = 6;
+
+  // 1. Top Header (Logo, Company Details, BCA / bizSAFE marks)
+  if (assets.promachLogo) {
+    try {
+      doc.addImage(assets.promachLogo, "PNG", margin, y, 22, 20);
+    } catch {
+      // fallback
+    }
+  }
+
+  if (assets.contractorMarks) {
+    try {
+      doc.addImage(assets.contractorMarks, "PNG", pageWidth - margin - 32, y + 1, 32, 13);
+    } catch {
+      // fallback
+    }
+  }
+
+  const centerCol = 100;
+  doc.setTextColor(...brandNavy);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text(companyProfile.name, centerCol, y + 5, { align: "center" });
+
+  doc.setTextColor(...textDark);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
+  doc.text(clean(companyProfile.address), centerCol, y + 9, { align: "center" });
+  doc.text(`Tel: ${companyProfile.phone} | E-mail: ${companyProfile.email} | Website: ${companyProfile.website}`, centerCol, y + 12.5, { align: "center" });
+  doc.text(clean(companyProfile.registration), centerCol, y + 16, { align: "center" });
+
+  y += 20;
+
+  // Title Banner
+  doc.setTextColor(...brandNavy);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  const titleText = eq.category === "CRAC"
+    ? "CRAC / PRECISION AIR CONDITIONER MAINTENANCE CHECKLIST"
+    : "PREVENTIVE MAINTENANCE SERVICE REPORT";
+  doc.text(titleText, pageWidth / 2, y + 3, { align: "center" });
+
+  y += 6;
+
+  // Meta Box (Report No., Service Date, Time In/Out, Technician, QR Code hint)
+  doc.setFillColor(...tableHeaderBg);
+  doc.setDrawColor(...tableBorder);
+  doc.setLineWidth(0.3);
+  doc.rect(margin, y, contentWidth, 12, "FD");
+
+  const colW = contentWidth / 4;
+  // Box 1: Report No
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6);
+  doc.setTextColor(...textMuted);
+  doc.text("REPORT NO.", margin + 4, y + 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...brandNavy);
+  doc.text(eq.runningReportNo || report.id, margin + 4, y + 9);
+
+  // Box 2: Service Date
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6);
+  doc.setTextColor(...textMuted);
+  doc.text("SERVICE DATE", margin + colW + 4, y + 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...textDark);
+  doc.text(clean(report.date || "28 Jul 2026"), margin + colW + 4, y + 9);
+
+  // Box 3: Time In / Out
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6);
+  doc.setTextColor(...textMuted);
+  doc.text("TIME IN / OUT", margin + colW * 2 + 4, y + 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...textDark);
+  doc.text(`${report.timeIn || "09:15 AM"} / ${report.timeOut || "11:45 AM"}`, margin + colW * 2 + 4, y + 9);
+
+  // Box 4: Technician
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6);
+  doc.setTextColor(...textMuted);
+  doc.text("TECHNICIAN(S)", margin + colW * 3 + 4, y + 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...textDark);
+  doc.text(clean(report.technicians.join(", ") || "Ramesh Kumar"), margin + colW * 3 + 4, y + 9);
+
+  y += 14;
+
+  // 2-Column: Section 1 (CLIENT & SITE) & Section 2 (EQUIPMENT INFO)
+  const halfW = (contentWidth - 2) / 2;
+  const s1x = margin;
+  const s2x = margin + halfW + 2;
+  const sHeight = 36;
+
+  // S1 Header
+  renderSectionHeader(doc, s1x, y, halfW, "1. CLIENT & SITE INFORMATION");
+  // S2 Header
+  renderSectionHeader(doc, s2x, y, halfW, "2. EQUIPMENT INFORMATION");
+
+  const sBodyY = y + 5;
+  // S1 Box
+  doc.setFillColor(255, 255, 255);
+  doc.rect(s1x, sBodyY, halfW, sHeight, "FD");
+  // S2 Box
+  doc.rect(s2x, sBodyY, halfW, sHeight, "FD");
+
+  // S1 Content
+  const s1Rows = [
+    ["Client Name", clean(report.client)],
+    ["Site Name", clean(report.siteName || report.client)],
+    ["Building / Area", clean(report.buildingArea || "Control Building")],
+    ["Location", clean(eq.location || report.address)],
+    ["Work Order No.", clean(report.workOrderNo || "WO/2026/0728")],
+    ["PO No.", clean(report.poNo || "PO/2026/0550")],
+    ["Service Type", clean(report.serviceType || "Quarterly Maintenance")],
+  ];
+  let curY = sBodyY + 4;
+  s1Rows.forEach(([lbl, val]) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.2);
+    doc.setTextColor(...textMuted);
+    doc.text(lbl, s1x + 2, curY);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...textDark);
+    doc.text(`:  ${val}`, s1x + 28, curY);
+    curY += 4.8;
+  });
+
+  // S2 Content
+  const s2Rows = [
+    ["Equipment Category", clean(eq.type || "AHU (Air Handling Unit)")],
+    ["Equipment Tag No.", clean(eq.tagNo || eq.name)],
+    ["Equipment Description", clean(eq.name || eq.tagNo || "")],
+    ["Brand / Model", `${clean(eq.brand)} / ${clean(eq.model)}`],
+    ["Serial No.", clean(eq.serial || "N/A")],
+    ["Capacity / Motor", `${clean(eq.capacity || "18,000 CMH")} | ${clean(eq.motorType || "Three Phase")}`],
+    ["Asset No.", clean(eq.assetNo || "TP-ACMV-001")],
+  ];
+  curY = sBodyY + 4;
+  s2Rows.forEach(([lbl, val]) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.2);
+    doc.setTextColor(...textMuted);
+    doc.text(lbl, s2x + 2, curY);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...textDark);
+    doc.text(`:  ${val}`, s2x + 32, curY);
+    curY += 4.8;
+  });
+
+  // Draw Equipment QR placeholder box on right of S2
+  doc.setFillColor(...tableRowAltBg);
+  doc.rect(s2x + halfW - 18, sBodyY + 2, 16, 16, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5);
+  doc.setTextColor(...brandNavy);
+  doc.text("QR CODE", s2x + halfW - 10, sBodyY + 9, { align: "center" });
+  doc.setFontSize(4.5);
+  doc.text(clean(eq.tagNo || "QR"), s2x + halfW - 10, sBodyY + 13, { align: "center" });
+
+  y = sBodyY + sHeight + 3;
+
+  // Section 3: MAINTENANCE CHECKLIST (2-column layout)
+  renderSectionHeader(doc, margin, y, contentWidth, "3. MAINTENANCE CHECKLIST");
+  y += 5;
+
+  const checklistItems = eq.checklistResults && eq.checklistResults.length > 0
+    ? eq.checklistResults
+    : (eq.checklist || []).map((item) => ({ item, result: "YES" as const, remark: "Good" }));
+
+  const halfCount = Math.ceil(checklistItems.length / 2);
+  const leftItems = checklistItems.slice(0, halfCount);
+  const rightItems = checklistItems.slice(halfCount);
+
+  const checkTableW = halfW;
+  const checkRowH = 4.2;
+
+  // Left Checklist Table
+  renderChecklistSubtable(doc, margin, y, checkTableW, leftItems, 1);
+  // Right Checklist Table
+  renderChecklistSubtable(doc, margin + halfW + 2, y, checkTableW, rightItems, halfCount + 1);
+
+  y += Math.max(leftItems.length, rightItems.length) * checkRowH + 5 + 3;
+
+  // Section 4: MEASUREMENT READINGS (2-column layout)
+  renderSectionHeader(doc, margin, y, contentWidth, "4. MEASUREMENT READINGS");
+  y += 5;
+
+  const measurements = eq.measurements && eq.measurements.length > 0 ? eq.measurements : [];
+  const measHalf = Math.ceil(measurements.length / 2);
+  const leftMeas = measurements.slice(0, measHalf);
+  const rightMeas = measurements.slice(measHalf);
+
+  renderMeasurementSubtable(doc, margin, y, checkTableW, leftMeas);
+  renderMeasurementSubtable(doc, margin + halfW + 2, y, checkTableW, rightMeas);
+
+  y += Math.max(leftMeas.length, rightMeas.length, 1) * checkRowH + 5 + 3;
+
+  // Section 5, 6, 7: 3-column lower block (FINDINGS & RECOMMENDATIONS, SPARES, SERVICE SUMMARY)
+  const col3W = (contentWidth - 4) / 3;
+
+  // Col 1: Findings & Recommendations
+  renderSectionHeader(doc, margin, y, col3W, "5. FINDINGS & RECOMMENDATIONS");
+  // Col 2: Spare Parts
+  renderSectionHeader(doc, margin + col3W + 2, y, col3W, "6. SPARE PARTS USED");
+  // Col 3: Service Summary
+  renderSectionHeader(doc, margin + (col3W + 2) * 2, y, col3W, "7. SERVICE SUMMARY");
+
+  y += 5;
+  const lowerH = 26;
+
+  // Col 1 Box
+  doc.setFillColor(255, 255, 255);
+  doc.rect(margin, y, col3W, lowerH, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.8);
+  doc.setTextColor(...brandNavy);
+  doc.text("Findings:", margin + 2, y + 4);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.4);
+  doc.setTextColor(...textDark);
+  const findingsList = eq.findings || report.findings || ["Running normal.", "Regular maintenance completed."];
+  let findY = y + 7.5;
+  findingsList.slice(0, 2).forEach((f) => {
+    doc.text(`- ${clean(f)}`.slice(0, 38), margin + 2, findY);
+    findY += 3.8;
+  });
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.8);
+  doc.setTextColor(...brandNavy);
+  doc.text("Recommendations:", margin + 2, findY + 1);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.4);
+  doc.setTextColor(...textDark);
+  const recList = eq.recommendations || report.recommendations || ["Routine filter cleaning as scheduled."];
+  doc.text(`- ${clean(recList[0] || "Monitor regularly.")}`.slice(0, 38), margin + 2, findY + 4.5);
+
+  // Col 2 Box: Spares
+  const col2X = margin + col3W + 2;
+  doc.rect(col2X, y, col3W, lowerH, "FD");
+  doc.setFillColor(...tableHeaderBg);
+  doc.rect(col2X, y, col3W, 4, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.4);
+  doc.setTextColor(...brandNavy);
+  doc.text("Item Description", col2X + 2, y + 3);
+  doc.text("Qty", col2X + col3W - 20, y + 3);
+  doc.text("Remarks", col2X + col3W - 10, y + 3);
+
+  const spares = eq.spareParts || report.spareParts || [
+    { id: "1", description: "Air Filter (Pre)", qty: "1 No.", remarks: "Replaced" },
+    { id: "2", description: "Drain Pan Treatment", qty: "1 No.", remarks: "Completed" },
+  ];
+  let spareY = y + 7;
+  spares.slice(0, 4).forEach((sp) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(5.2);
+    doc.setTextColor(...textDark);
+    doc.text(clean(sp.description).slice(0, 22), col2X + 2, spareY);
+    doc.text(clean(sp.qty), col2X + col3W - 20, spareY);
+    doc.text(clean(sp.remarks).slice(0, 10), col2X + col3W - 10, spareY);
+    spareY += 4.2;
+  });
+
+  // Col 3 Box: Service Summary
+  const col3X = margin + (col3W + 2) * 2;
+  doc.rect(col3X, y, col3W, lowerH, "FD");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.8);
+  doc.setTextColor(...textMuted);
+  doc.text("Overall Condition:", col3X + 2, y + 4.5);
+  doc.setFillColor(...lightGreenBg);
+  doc.roundedRect(col3X + 26, y + 1.5, 14, 4, 1, 1, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...brandGreen);
+  doc.text(clean(eq.overallCondition || report.overallCondition || "Good"), col3X + 33, y + 4.3, { align: "center" });
+
+  doc.setTextColor(...textMuted);
+  doc.setFont("helvetica", "normal");
+  doc.text("Service Completed:", col3X + 2, y + 10);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...textDark);
+  doc.text(eq.serviceCompleted !== false ? "Yes" : "Pending", col3X + 30, y + 10);
+
+  doc.setTextColor(...textMuted);
+  doc.setFont("helvetica", "normal");
+  doc.text("Further Action:", col3X + 2, y + 15.5);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...textDark);
+  doc.text(clean(eq.furtherActionRequired || report.furtherActionRequired || "Monitor current").slice(0, 20), col3X + 22, y + 15.5);
+
+  doc.setTextColor(...textMuted);
+  doc.setFont("helvetica", "normal");
+  doc.text("Next Service Due:", col3X + 2, y + 21);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...brandNavy);
+  doc.text(clean(eq.nextServiceDue || report.nextServiceDue || "28 Oct 2026"), col3X + 26, y + 21);
+
+  y += lowerH + 3;
+
+  // Section 8: SIGNATURES (4 columns)
+  renderSectionHeader(doc, margin, y, contentWidth, "8. SIGNATURES & ACKNOWLEDGEMENT");
+  y += 5;
+
+  const sigW = (contentWidth - 6) / 4;
+  const sigH = 18;
+
+  // Box 1: Technician
+  renderSignatureBox(doc, margin, y, sigW, sigH, "Technician", report.technicians[0] || "Ramesh Kumar", report.date || "28 Jul 2026", "11:45 AM");
+  // Box 2: Supervisor
+  renderSignatureBox(doc, margin + sigW + 2, y, sigW, sigH, "Supervisor (Optional)", report.supervisorName || "Sridhar M.", report.date || "28 Jul 2026", "12:00 PM");
+  // Box 3: Client Representative
+  renderSignatureBox(doc, margin + (sigW + 2) * 2, y, sigW, sigH, "Client Representative", report.acknowledgement?.name || "Mr. Nasir Bin Abdul Majid", report.acknowledgement?.signedDate || "28 Jul 2026", "12:15 PM");
+  // Box 4: Company Stamp
+  const stampX = margin + (sigW + 2) * 3;
+  doc.setFillColor(255, 255, 255);
+  doc.rect(stampX, y, sigW, sigH, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.5);
+  doc.setTextColor(...brandNavy);
+  doc.text("Company Stamp", stampX + 2, y + 3.5);
+  doc.setDrawColor(...brandNavy);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(stampX + 3, y + 5.5, sigW - 6, sigH - 7, 1, 1, "D");
+  doc.setFontSize(6.5);
+  doc.text("PROMACH PTE. LTD.", stampX + sigW / 2, y + 11, { align: "center" });
+
+  y += sigH + 3;
+
+  // Footer: ISO Accreditation strip & computer generated disclaimer
+  if (assets.certificationStrip) {
+    try {
+      doc.addImage(assets.certificationStrip, "PNG", margin + 15, y, contentWidth - 30, 8);
+    } catch {
+      // fallback
+    }
+  }
+
+  y += 9;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.2);
+  doc.setTextColor(...textMuted);
+  doc.text(`Report generated on: ${report.date || "28 Jul 2026"} | Generated by: PDMS Mobile App`, margin, y);
+  doc.text("Our ref: QMS-FR-07 | Rev: 02 | Eff: 01-05-2024", pageWidth / 2, y, { align: "center" });
+  doc.text(`Page ${pageNo} of ${totalPages}`, pageWidth - margin, y, { align: "right" });
+
+  y += 3;
+  doc.setFontSize(4.8);
+  doc.text("This is a computer generated document and does not require a manual signature.", pageWidth / 2, y, { align: "center" });
+}
+
+function renderSectionHeader(doc: jsPDF, x: number, y: number, w: number, title: string) {
+  doc.setFillColor(...brandHeaderBg);
+  doc.rect(x, y, w, 4.8, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.8);
+  doc.setTextColor(255, 255, 255);
+  doc.text(title, x + 2.5, y + 3.4);
+}
+
+function renderChecklistSubtable(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  items: Array<{ item: string; result: string; remark: string }>,
+  startNo: number,
+) {
+  // Table Header
+  doc.setFillColor(...tableHeaderBg);
+  doc.setDrawColor(...tableBorder);
+  doc.setLineWidth(0.25);
+  doc.rect(x, y, w, 4, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.5);
+  doc.setTextColor(...brandNavy);
+  doc.text("No.", x + 1.5, y + 2.8);
+  doc.text("Checklist Item", x + 8, y + 2.8);
+  doc.text("Yes", x + w - 28, y + 2.8);
+  doc.text("No", x + w - 21, y + 2.8);
+  doc.text("N.A.", x + w - 15, y + 2.8);
+  doc.text("Remarks", x + w - 8, y + 2.8);
+
+  let curY = y + 4;
+  const rowH = 4.2;
+
+  items.forEach((item, idx) => {
+    const isAlt = idx % 2 === 1;
+    doc.setFillColor(isAlt ? 255 : 250, isAlt ? 255 : 252, isAlt ? 255 : 255);
+    doc.rect(x, curY, w, rowH, "FD");
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(5.2);
+    doc.setTextColor(...textDark);
+    doc.text(String(startNo + idx), x + 2, curY + 2.8);
+    doc.text(clean(item.item).slice(0, 36), x + 8, curY + 2.8);
+
+    // Yes/No/NA indicator
+    const res = item.result?.toUpperCase();
+    doc.setFont("helvetica", "bold");
+    if (res === "YES" || res === "OK") {
+      doc.setTextColor(...brandGreen);
+      doc.text("✓", x + w - 27, curY + 2.8);
+    } else {
+      doc.setTextColor(...textMuted);
+      doc.text("-", x + w - 27, curY + 2.8);
+    }
+
+    if (res === "NO" || res === "FAULTY") {
+      doc.setTextColor(...brandRed);
+      doc.text("✗", x + w - 20, curY + 2.8);
+    } else {
+      doc.setTextColor(...textMuted);
+      doc.text("-", x + w - 20, curY + 2.8);
+    }
+
+    if (res === "N/A" || res === "NA") {
+      doc.setTextColor(...textMuted);
+      doc.text("–", x + w - 14, curY + 2.8);
+    } else {
+      doc.setTextColor(...textMuted);
+      doc.text("-", x + w - 14, curY + 2.8);
+    }
+
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...textDark);
+    doc.text(clean(item.remark || "Good").slice(0, 10), x + w - 8, curY + 2.8);
+
+    curY += rowH;
+  });
+}
+
+function renderMeasurementSubtable(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  items: Array<{ label: string; value: string; unit: string; min?: number; max?: number; status?: string; isAbnormal?: boolean }>,
+) {
+  doc.setFillColor(...tableHeaderBg);
+  doc.setDrawColor(...tableBorder);
+  doc.setLineWidth(0.25);
+  doc.rect(x, y, w, 4, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.5);
+  doc.setTextColor(...brandNavy);
+  doc.text("Parameter", x + 2, y + 2.8);
+  doc.text("Actual", x + w - 38, y + 2.8);
+  doc.text("Normal Range", x + w - 26, y + 2.8);
+  doc.text("Unit", x + w - 13, y + 2.8);
+  doc.text("Status", x + w - 6, y + 2.8);
+
+  let curY = y + 4;
+  const rowH = 4.2;
+
+  items.forEach((m, idx) => {
+    const isAlt = idx % 2 === 1;
+    doc.setFillColor(isAlt ? 255 : 250, isAlt ? 255 : 252, isAlt ? 255 : 255);
+    doc.rect(x, curY, w, rowH, "FD");
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(5.2);
+    doc.setTextColor(...textDark);
+    doc.text(clean(m.label).slice(0, 26), x + 2, curY + 2.8);
+
+    doc.setFont("helvetica", "bold");
+    doc.text(clean(m.value || "-"), x + w - 38, curY + 2.8);
+
+    doc.setFont("helvetica", "normal");
+    const rangeText = m.min !== undefined && m.max !== undefined ? `${m.min}-${m.max}` : "-";
+    doc.text(rangeText, x + w - 26, curY + 2.8);
+    doc.text(clean(m.unit || ""), x + w - 13, curY + 2.8);
+
+    const isAbnormal = m.isAbnormal || m.status === "Abnormal" || m.status === "High" || m.status === "Low";
+    if (isAbnormal) {
+      doc.setFillColor(...lightRedBg);
+      doc.roundedRect(x + w - 8.5, curY + 0.6, 7.5, 3, 0.5, 0.5, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...brandRed);
+      doc.text("Abn", x + w - 5, curY + 2.7, { align: "center" });
+    } else {
+      doc.setFillColor(...lightGreenBg);
+      doc.roundedRect(x + w - 8.5, curY + 0.6, 7.5, 3, 0.5, 0.5, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...brandGreen);
+      doc.text("Norm", x + w - 5, curY + 2.7, { align: "center" });
+    }
+
+    curY += rowH;
+  });
+}
+
+function renderSignatureBox(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  title: string,
+  name: string,
+  date: string,
+  time: string,
+) {
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(...tableBorder);
+  doc.setLineWidth(0.3);
+  doc.rect(x, y, w, h, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.5);
+  doc.setTextColor(...brandNavy);
+  doc.text(title, x + 2, y + 3.5);
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(7.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text(name, x + w / 2, y + 9.5, { align: "center" });
+
+  doc.setDrawColor(...tableBorder);
+  doc.setLineWidth(0.2);
+  doc.line(x + 3, y + 12.5, x + w - 3, y + 12.5);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5);
+  doc.setTextColor(...textMuted);
+  doc.text(`${date} | ${time}`, x + w / 2, y + 15.5, { align: "center" });
 }

@@ -2,9 +2,9 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ensureDatabase, readWorkspace } from "../server/database.ts";
 import {
-  closeMongoConnection,
-  pingMongoDatabase,
-} from "../server/mongodb.ts";
+  closePostgresConnection,
+  pingPostgresDatabase,
+} from "../server/postgres.ts";
 
 async function loadLocalEnvironment(): Promise<void> {
   try {
@@ -29,12 +29,13 @@ async function loadLocalEnvironment(): Promise<void> {
 await loadLocalEnvironment();
 
 try {
-  await pingMongoDatabase();
+  await pingPostgresDatabase();
   await ensureDatabase();
   const workspace = await readWorkspace();
   process.stdout.write(
     [
-      `MongoDB database: ${process.env.MONGODB_DB || "report_gen"}`,
+      `PostgreSQL database: ${process.env.DATABASE_NAME || "report_gen"}`,
+      `Host: ${process.env.DATABASE_HOST || "localhost"}`,
       `Clients: ${workspace.clients.length}`,
       `Sites: ${workspace.locations.length}`,
       `Equipment: ${workspace.equipment.length}`,
@@ -45,5 +46,5 @@ try {
     ].join("\n") + "\n",
   );
 } finally {
-  await closeMongoConnection();
+  await closePostgresConnection();
 }

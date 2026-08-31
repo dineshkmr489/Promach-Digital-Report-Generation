@@ -10,22 +10,26 @@
     "build": "next build",
     "build:ec2": "next build && node scripts/prepare-standalone.mjs",
     "generate:pdfs": "node --experimental-strip-types scripts/generate-sample-pdfs.ts",
-    "seed": "node --experimental-strip-types scripts/seed-mongodb.ts",
+    "seed": "node --experimental-strip-types scripts/seed-database.ts",
     "start": "node scripts/start.mjs",
     "test": "npm run build:ec2 && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern .next"
   },
   "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1121.0",
+    "@aws-sdk/client-rds": "^3.1121.0",
+    "@aws-sdk/client-secrets-manager": "^3.1121.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.26.0",
-    "mongodb": "7.5.0",
     "next": "16.2.11",
+    "pg": "^8.23.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
+    "@types/pg": "^8.23.1",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",

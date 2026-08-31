@@ -13,6 +13,7 @@ import type {
   UserRole,
   WorkspaceReport,
 } from "../app/workspaceTypes.ts";
+import { hasRolePermission } from "../app/rbac.ts";
 import {
   adminIdentity,
   adminSessionCookie,
@@ -43,6 +44,15 @@ import {
   userLoginExists,
   type MasterRecord,
 } from "./database.ts";
+import {
+  deleteStoredObject,
+  listStoredObjects,
+  readStoredObject,
+  storageReferenceToAccessPath,
+  storeBytes,
+  storeDataUrl,
+  verifyStorageAccess,
+} from "./objectStorage.ts";
 
 const SIGNATURE_LIMIT = 700_000;
 const REPORT_IMAGE_LIMIT = 6;
@@ -133,7 +143,14 @@ function responseJson(
   headers.set("content-type", "application/json; charset=utf-8");
   headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
-  return new Response(JSON.stringify(payload), { status, headers });
+  return new Response(
+    JSON.stringify(payload, (_key, value) =>
+      typeof value === "string"
+        ? storageReferenceToAccessPath(value)
+        : value,
+    ),
+    { status, headers },
+  );
 }
 
 function apiError(message: string, status = 400): Response {
@@ -180,6 +197,28 @@ async function jsonBody<T>(request: Request): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+async function pdfBody(request: Request): Promise<Uint8Array> {
+  if (
+    !request.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .startsWith("application/pdf")
+  ) {
+    throw new ApiRequestError("A PDF report is required.", 415);
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (!bytes.length || bytes.length > 10_000_000) {
+    throw new ApiRequestError("The PDF report must be 10 MB or less.", 413);
+  }
+  if (
+    bytes.length < 5 ||
+    String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-"
+  ) {
+    throw new ApiRequestError("The submitted report is not a valid PDF.", 400);
+  }
+  return bytes;
 }
 
 function userRole(value: unknown): UserRole {
@@ -762,6 +801,24 @@ async function createReport(
 
   const reportId = await nextReportNumber();
   const now = new Date().toISOString();
+  const uploadedReferences: string[] = [];
+  let storedImages: typeof images;
+  try {
+    storedImages = await Promise.all(
+      images.map(async (image) => {
+        const reference = await storeDataUrl(
+          image.dataUrl,
+          `reports/${reportId}/images`,
+          image.name,
+        );
+        uploadedReferences.push(reference);
+        return { ...image, dataUrl: reference };
+      }),
+    );
+  } catch (error) {
+    await Promise.allSettled(uploadedReferences.map(deleteStoredObject));
+    throw error;
+  }
   const report: WorkspaceReport = {
     id: reportId,
     clientId,
@@ -778,7 +835,7 @@ async function createReport(
     summary,
     workPerformed,
     equipment: equipmentSnapshots,
-    images,
+    images: storedImages,
     technicianIds,
     technicians: (technicians as TechnicianRecord[]).map((item) => item.name),
     remarks: remarks || "No additional remarks.",
@@ -803,7 +860,12 @@ async function createReport(
       },
     ],
   };
-  await insertReport(report);
+  try {
+    await insertReport(report);
+  } catch (error) {
+    await Promise.allSettled(uploadedReferences.map(deleteStoredObject));
+    throw error;
+  }
   return reportId;
 }
 
@@ -858,33 +920,45 @@ async function signReport(
     );
   }
   const now = new Date().toISOString();
-  const result = await completeReportSignature(
-    reportId,
-    {
-      signerName,
-      signerEmail,
-      designation,
-      signedAt: now,
-      channel,
-      dataUrl: payload.signatureDataUrl,
-      consentText: CONSENT_TEXT,
-    },
-    {
-      name: signerName,
-      designation,
-      signedDate: formatDisplayDate(now.slice(0, 10)),
-    },
-    {
-      id: newId("audit"),
-      reportId,
-      action: "Digitally signed and completed",
-      actorName: actorName || signerName,
-      channel,
-      createdAt: now,
-      detail: `Signed by ${signerName} (${signerEmail}). The completed report is locked.`,
-    },
+  const signatureReference = await storeDataUrl(
+    payload.signatureDataUrl,
+    `reports/${reportId}/signatures`,
+    `${channel}-signature.png`,
   );
+  let result: Awaited<ReturnType<typeof completeReportSignature>>;
+  try {
+    result = await completeReportSignature(
+      reportId,
+      {
+        signerName,
+        signerEmail,
+        designation,
+        signedAt: now,
+        channel,
+        dataUrl: signatureReference,
+        consentText: CONSENT_TEXT,
+      },
+      {
+        name: signerName,
+        designation,
+        signedDate: formatDisplayDate(now.slice(0, 10)),
+      },
+      {
+        id: newId("audit"),
+        reportId,
+        action: "Digitally signed and completed",
+        actorName: actorName || signerName,
+        channel,
+        createdAt: now,
+        detail: `Signed by ${signerName} (${signerEmail}). The completed report is locked.`,
+      },
+    );
+  } catch (error) {
+    await deleteStoredObject(signatureReference).catch(() => undefined);
+    throw error;
+  }
   if (result !== "updated") {
+    await deleteStoredObject(signatureReference).catch(() => undefined);
     throw new Error("This report is no longer available for signature.");
   }
 }
@@ -897,6 +971,30 @@ export async function handleApiRequest(request: Request): Promise<Response> {
 
   try {
     const segments = url.pathname.split("/").filter(Boolean);
+
+    if (
+      request.method === "GET" &&
+      segments[1] === "files" &&
+      segments.length === 3
+    ) {
+      const key = verifyStorageAccess(
+        segments[2],
+        url.searchParams.get("expires"),
+        url.searchParams.get("signature"),
+      );
+      if (!key) return apiError("This private file link is invalid or expired.", 403);
+      const object = await readStoredObject(key);
+      return new Response(object.body, {
+        status: 200,
+        headers: {
+          "content-type": object.contentType,
+          "cache-control": "private, max-age=900",
+          "content-security-policy": "default-src 'none'",
+          "x-content-type-options": "nosniff",
+          ...(object.etag ? { etag: object.etag } : {}),
+        },
+      });
+    }
 
     if (request.method === "POST" && url.pathname === "/api/auth/login") {
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
@@ -974,6 +1072,27 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       request.method === "POST" &&
       segments[1] === "client" &&
       segments[2] === "reports" &&
+      segments[4] === "pdf"
+    ) {
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const token = decodeURIComponent(segments[3] ?? "");
+      const report = await findClientReport(token);
+      if (!report || report.status !== "Completed") {
+        return apiError("This completed report is unavailable.", 404);
+      }
+      const bytes = await pdfBody(request);
+      await storeBytes(
+        bytes,
+        `reports/${report.id}/pdf/${report.id}.pdf`,
+        "application/pdf",
+      );
+      return new Response(null, { status: 204 });
+    }
+
+    if (
+      request.method === "POST" &&
+      segments[1] === "client" &&
+      segments[2] === "reports" &&
       segments[4] === "sign"
     ) {
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
@@ -1004,13 +1123,88 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       return responseJson({ user: admin });
     }
 
+    if (request.method === "GET" && url.pathname === "/api/storage") {
+      if (!hasRolePermission(admin.role, "storage:view")) return forbidden();
+      const [objects, workspace] = await Promise.all([
+        listStoredObjects(),
+        readWorkspace(),
+      ]);
+      const reportOwners = new Map(
+        workspace.reports.map((report) => [report.id, report.client]),
+      );
+      const tracedObjects = objects.map((object) => {
+        const pathParts = object.key.split("/");
+        const reportId = pathParts[0] === "reports" ? pathParts[1] : null;
+        const client = reportId
+          ? reportOwners.get(reportId) ?? "Unassigned report"
+          : "Promach shared assets";
+        const category = object.key.includes("/images/")
+          ? "Service images"
+          : object.key.includes("/signatures/")
+            ? "Digital signatures"
+            : object.key.includes("/pdf/") || object.key.endsWith(".pdf")
+              ? "Report and certificate PDFs"
+              : "Application assets";
+        return { ...object, client, category, reportId };
+      });
+      const clientUsage = new Map<
+        string,
+        {
+          client: string;
+          currentObjects: number;
+          versions: number;
+          currentBytes: number;
+          totalBytes: number;
+        }
+      >();
+      for (const object of tracedObjects) {
+        const usage = clientUsage.get(object.client) ?? {
+          client: object.client,
+          currentObjects: 0,
+          versions: 0,
+          currentBytes: 0,
+          totalBytes: 0,
+        };
+        usage.versions += 1;
+        usage.totalBytes += object.sizeBytes;
+        if (object.isLatest) {
+          usage.currentObjects += 1;
+          usage.currentBytes += object.sizeBytes;
+        }
+        clientUsage.set(object.client, usage);
+      }
+      const currentObjects = tracedObjects.filter((object) => object.isLatest);
+      const totalBytes = tracedObjects.reduce(
+        (total, object) => total + object.sizeBytes,
+        0,
+      );
+      const currentBytes = currentObjects.reduce(
+        (total, object) => total + object.sizeBytes,
+        0,
+      );
+      return responseJson({
+        bucket: process.env.S3_BUCKET?.trim() || "digi-repo-gen",
+        region: process.env.AWS_REGION?.trim() || "ap-southeast-1",
+        totalBytes,
+        currentBytes,
+        noncurrentBytes: totalBytes - currentBytes,
+        objectCount: currentObjects.length,
+        versionCount: tracedObjects.length,
+        measuredAt: new Date().toISOString(),
+        clientUsage: Array.from(clientUsage.values()).sort(
+          (left, right) => right.totalBytes - left.totalBytes,
+        ),
+        objects: tracedObjects,
+      });
+    }
+
     if (request.method === "GET" && url.pathname === "/api/users") {
-      if (admin.role !== "Administrator") return forbidden();
+      if (!hasRolePermission(admin.role, "users:manage")) return forbidden();
       return responseJson({ users: await readUsers() });
     }
 
     if (request.method === "POST" && url.pathname === "/api/users") {
-      if (admin.role !== "Administrator") return forbidden();
+      if (!hasRolePermission(admin.role, "users:manage")) return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<Record<string, unknown>>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);
@@ -1049,7 +1243,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "users" &&
       segments.length === 3
     ) {
-      if (admin.role !== "Administrator") return forbidden();
+      if (!hasRolePermission(admin.role, "users:manage")) return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const userId = decodeURIComponent(segments[2]);
       const existing = await findUser(userId);
@@ -1115,7 +1309,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "users" &&
       segments.length === 3
     ) {
-      if (admin.role !== "Administrator") return forbidden();
+      if (!hasRolePermission(admin.role, "users:manage")) return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const userId = decodeURIComponent(segments[2]);
       if (userId === admin.id) {
@@ -1220,7 +1414,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "master" &&
       segments.length === 3
     ) {
-      if (!["Administrator", "Operations Manager"].includes(admin.role)) {
+      if (!hasRolePermission(admin.role, "master:manage")) {
         return forbidden();
       }
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
@@ -1235,7 +1429,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "master" &&
       segments.length === 4
     ) {
-      if (!["Administrator", "Operations Manager"].includes(admin.role)) {
+      if (!hasRolePermission(admin.role, "master:manage")) {
         return forbidden();
       }
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
@@ -1254,7 +1448,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "master" &&
       segments.length === 4
     ) {
-      if (!["Administrator", "Operations Manager"].includes(admin.role)) {
+      if (!hasRolePermission(admin.role, "master:manage")) {
         return forbidden();
       }
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
@@ -1266,7 +1460,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
     }
 
     if (request.method === "POST" && url.pathname === "/api/reports") {
-      if (admin.role === "Viewer") return forbidden();
+      if (!hasRolePermission(admin.role, "reports:operate")) return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<CreateReportPayload>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);
@@ -1284,9 +1478,27 @@ export async function handleApiRequest(request: Request): Promise<Response> {
     if (
       request.method === "POST" &&
       segments[1] === "reports" &&
+      segments[3] === "pdf"
+    ) {
+      if (!hasRolePermission(admin.role, "reports:operate")) return forbidden();
+      if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
+      const report = await findReport(segments[2]);
+      if (!report) throw new ApiRequestError("Report not found.", 404);
+      const bytes = await pdfBody(request);
+      await storeBytes(
+        bytes,
+        `reports/${report.id}/pdf/${report.id}.pdf`,
+        "application/pdf",
+      );
+      return new Response(null, { status: 204 });
+    }
+
+    if (
+      request.method === "POST" &&
+      segments[1] === "reports" &&
       segments[3] === "send"
     ) {
-      if (admin.role === "Viewer") return forbidden();
+      if (!hasRolePermission(admin.role, "reports:operate")) return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const sharePath = await sendReport(segments[2], admin.name);
       return responseJson({ sharePath, workspace: await readWorkspace() });
@@ -1297,7 +1509,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       segments[1] === "reports" &&
       segments[3] === "sign-admin"
     ) {
-      if (admin.role === "Viewer") return forbidden();
+      if (!hasRolePermission(admin.role, "reports:operate")) return forbidden();
       if (!sameOrigin(request)) return apiError("Invalid request origin.", 403);
       const payload = await jsonBody<Record<string, unknown>>(request);
       if (!payload) return apiError("A JSON request body is required.", 415);

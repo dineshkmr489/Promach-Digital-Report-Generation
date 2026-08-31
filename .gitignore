@@ -35,4 +35,9 @@ yarn-error.log*
 next-env.d.ts
 *.tsbuildinfo
 /outputs/
+/output/
 /tmp/
+/reference-template/
+docs/PDMS_CLIENT_IMPLEMENTATION_PLAN.md
+*.docx
+aws-cli-iam-secret.md

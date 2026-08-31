@@ -1,0 +1,60 @@
+name: Deploy Promach Digital Service Reports to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build standalone application (CI runner)
+        run: npm run build:ec2
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.EC2_REGION || 'ap-south-1' }}
+
+      - name: Generate SSH keypair for EC2 Instance Connect
+        run: |
+          ssh-keygen -t rsa -b 3840 -f ~/.ssh/ec2_id -N ""
+          chmod 600 ~/.ssh/ec2_id
+
+      - name: Send SSH Public Key via EC2 Instance Connect
+        run: |
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id ${{ secrets.EC2_INSTANCE_ID || 'i-00a82f68f7c330f0f' }} \
+            --instance-os-user ubuntu \
+            --ssh-public-key file://~/.ssh/ec2_id.pub
+
+      - name: Sync pre-built standalone files to EC2
+        env:
+          HOST: ${{ secrets.EC2_HOST || '13.203.219.73' }}
+        run: |
+          rsync -avz -e "ssh -i ~/.ssh/ec2_id -o StrictHostKeyChecking=no -o ConnectTimeout=15" \
+            --delete \
+            .next/standalone/ ubuntu@$HOST:/opt/promach-dsr/
+
+      - name: Restart application service on EC2
+        env:
+          HOST: ${{ secrets.EC2_HOST || '13.203.219.73' }}
+        run: |
+          ssh -i ~/.ssh/ec2_id -o StrictHostKeyChecking=no ubuntu@$HOST "sudo systemctl restart promach-dsr && sudo systemctl status promach-dsr --no-pager"

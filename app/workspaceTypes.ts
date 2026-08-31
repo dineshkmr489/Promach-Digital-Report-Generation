@@ -5,6 +5,8 @@ import type {
   Measurement,
   ServiceImage,
   ServiceReport,
+  SignatureMode,
+  SparePartItem,
 } from "./reportData";
 
 export type ReportStatus =
@@ -80,6 +82,8 @@ export type LocationRecord = {
   clientId: string;
   name: string;
   address: string;
+  building?: string;
+  room?: string;
   active: boolean;
 };
 
@@ -87,8 +91,9 @@ export type ChecklistTemplateRecord = {
   id: string;
   name: string;
   equipmentType: string;
+  frequency?: string;
   items: string[];
-  measurements: Array<{ label: string; unit: string }>;
+  measurements: Array<{ label: string; unit: string; min?: number; max?: number; category?: string }>;
   active: boolean;
 };
 
@@ -97,10 +102,19 @@ export type EquipmentRecord = {
   clientId: string;
   locationId: string;
   name: string;
+  tagNo?: string;
   type: string;
+  category?: string;
   brand: string;
   model: string;
   serial: string;
+  room?: string;
+  capacity?: string;
+  motorType?: "Single Phase" | "Three Phase";
+  voltageFrequency?: string;
+  installDate?: string;
+  assetNo?: string;
+  maintenanceFrequency?: string;
   checklistTemplateId: string;
   active: boolean;
 };
@@ -168,14 +182,27 @@ export type CreateReportPayload = {
   locationId: string;
   serviceDate: string;
   serviceType: string;
+  timeIn?: string;
+  timeOut?: string;
   summary: string;
   workPerformed: string[];
   equipmentIds: string[];
   checklistResults: Record<string, ChecklistResult[]>;
   measurements: Record<string, Measurement[]>;
   equipmentNotes: Record<string, string>;
+  spareParts?: Record<string, SparePartItem[]>;
+  findings?: string[];
+  recommendations?: string[];
+  urgentIssues?: string;
+  overallCondition?: "Good" | "Satisfactory" | "Unsatisfactory";
+  serviceCompleted?: boolean;
+  furtherActionRequired?: string;
+  nextServiceDue?: string;
+  signatureMode?: SignatureMode;
   images: ServiceImage[];
   technicianIds: string[];
+  technicianSignature?: { name: string; signedAt: string; dataUrl?: string };
+  supervisorSignature?: { name: string; signedAt: string; dataUrl?: string };
   remarks: string;
   followUp: string;
 };

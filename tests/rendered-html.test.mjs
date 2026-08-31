@@ -32,7 +32,7 @@ async function waitForApplication(url, server, serverOutput) {
   throw new Error(`Next.js did not become ready.\n${serverOutput.join("")}`);
 }
 
-test("server renders the MongoDB-backed Promach workspace", async (context) => {
+test("server renders the PostgreSQL-backed Promach workspace", async (context) => {
   const port = await availablePort();
   const output = [];
   const testUsername = "test-admin";
@@ -47,7 +47,6 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
         ADMIN_USERNAME: testUsername,
         ADMIN_PASSWORD: testPassword,
         ADMIN_EMAIL: "test-admin@promach.local",
-        MONGODB_DB: `${process.env.MONGODB_DB || "report_gen"}_automated_test`,
         HOSTNAME: "127.0.0.1",
         PORT: String(port),
       },
@@ -118,15 +117,15 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
 
   const html = await response.text();
   assert.match(html, /<title>Promach DSR \| Digital Service Reports<\/title>/i);
-  assert.match(html, /Service reporting, end to end/i);
+  assert.match(html, /Service operations, in control/i);
   assert.match(html, /Changi General Hospital/i);
   assert.match(html, /Tuas Power Generation/i);
   assert.match(html, /Create report/i);
   assert.match(html, /Master data/i);
   assert.match(html, /Users and roles/i);
+  assert.match(html, /Storage utilised/i);
   assert.match(html, /My profile/i);
   assert.match(html, /Administrator/i);
-  assert.doesNotMatch(html, /Operational workspace/i);
   assert.doesNotMatch(html, /Create one\. Sign anywhere\./i);
   assert.doesNotMatch(html, /Source documents/i);
   assert.doesNotMatch(html, /Retry sync/i);
@@ -141,59 +140,184 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
     "bootstrap administrator should be available through user management",
   );
 
-  const createdUserResponse = await fetch(`${baseUrl}/api/users`, {
-    method: "POST",
-    headers: {
-      cookie: sessionCookie,
-      "content-type": "application/json",
-      origin: baseUrl,
+  const roleAccounts = [
+    {
+      username: "test-operations-manager",
+      password: "test-operations-manager-password",
+      name: "Test Operations Manager",
+      email: "test-operations-manager@promach.local",
+      designation: "Operations Manager",
+      role: "Operations Manager",
     },
-    body: JSON.stringify({
+    {
+      username: "test-service-technician",
+      password: "test-service-technician-password",
+      name: "Test Service Technician",
+      email: "test-service-technician@promach.local",
+      designation: "Service Technician",
+      role: "Service Technician",
+    },
+    {
       username: "test-viewer",
       password: "test-viewer-password",
       name: "Test Viewer",
       email: "test-viewer@promach.local",
-      phone: "",
       designation: "Report Viewer",
       role: "Viewer",
-      active: true,
-    }),
-  });
-  assert.equal(createdUserResponse.status, 201);
-  const createdUserPayload = await createdUserResponse.json();
-  const createdUser = createdUserPayload.users.find(
-    (user) => user.username === "test-viewer",
-  );
-  assert.ok(createdUser);
-
-  const viewerLogin = await fetch(`${baseUrl}/api/auth/login`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: baseUrl,
     },
-    body: JSON.stringify({
-      username: "test-viewer",
-      password: "test-viewer-password",
-    }),
-  });
-  assert.equal(viewerLogin.status, 200);
-  const viewerCookie = (viewerLogin.headers.get("set-cookie") ?? "").split(";")[0];
-  const forbiddenReport = await fetch(`${baseUrl}/api/reports`, {
+  ];
+  const createdUsers = [];
+  const roleCookies = new Map();
+
+  for (const account of roleAccounts) {
+    const createdResponse = await fetch(`${baseUrl}/api/users`, {
+      method: "POST",
+      headers: {
+        cookie: sessionCookie,
+        "content-type": "application/json",
+        origin: baseUrl,
+      },
+      body: JSON.stringify({ ...account, phone: "", active: true }),
+    });
+    assert.equal(createdResponse.status, 201, `${account.role} should be created`);
+    const createdPayload = await createdResponse.json();
+    const createdUser = createdPayload.users.find(
+      (user) => user.username === account.username,
+    );
+    assert.ok(createdUser, `${account.role} should exist in user management`);
+    createdUsers.push(createdUser);
+
+    const roleLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: baseUrl,
+      },
+      body: JSON.stringify({
+        username: account.username,
+        password: account.password,
+      }),
+    });
+    assert.equal(roleLogin.status, 200, `${account.role} should sign in`);
+    roleCookies.set(
+      account.role,
+      (roleLogin.headers.get("set-cookie") ?? "").split(";")[0],
+    );
+  }
+
+  const roleNavigation = {
+    "Operations Manager": {
+      visible: [/>Field Service \(PDMS\)</i, />Create report</i, />Master data</i],
+      hidden: [/>Users and roles</i, />Storage utilised</i],
+    },
+    "Service Technician": {
+      visible: [/>Field Service \(PDMS\)</i, />Create report</i],
+      hidden: [/>Master data</i, />Users and roles</i, />Storage utilised</i],
+    },
+    Viewer: {
+      visible: [/>Service reports</i, />My profile</i],
+      hidden: [
+        />Field Service \(PDMS\)</i,
+        />Create report</i,
+        />Master data</i,
+        />Users and roles</i,
+        />Storage utilised</i,
+      ],
+    },
+  };
+
+  for (const [role, expected] of Object.entries(roleNavigation)) {
+    const rolePage = await fetch(`${baseUrl}/`, {
+      headers: { cookie: roleCookies.get(role) },
+    });
+    assert.equal(rolePage.status, 200);
+    const roleHtml = await rolePage.text();
+    for (const pattern of expected.visible) assert.match(roleHtml, pattern);
+    for (const pattern of expected.hidden) assert.doesNotMatch(roleHtml, pattern);
+
+    const usersForRole = await fetch(`${baseUrl}/api/users`, {
+      headers: { cookie: roleCookies.get(role) },
+    });
+    assert.equal(usersForRole.status, 403, `${role} must not manage users`);
+  }
+
+  for (const role of ["Operations Manager", "Service Technician"]) {
+    const reportAttempt = await fetch(`${baseUrl}/api/reports`, {
+      method: "POST",
+      headers: {
+        cookie: roleCookies.get(role),
+        "content-type": "application/json",
+        origin: baseUrl,
+      },
+      body: "{}",
+    });
+    assert.notEqual(reportAttempt.status, 403, `${role} may operate reports`);
+  }
+
+  const viewerReportAttempt = await fetch(`${baseUrl}/api/reports`, {
     method: "POST",
     headers: {
-      cookie: viewerCookie,
+      cookie: roleCookies.get("Viewer"),
       "content-type": "application/json",
       origin: baseUrl,
     },
     body: "{}",
   });
-  assert.equal(forbiddenReport.status, 403);
+  assert.equal(viewerReportAttempt.status, 403);
+
+  const managedClientName = `RBAC Test Client ${Date.now()}`;
+  const managerMasterCreate = await fetch(`${baseUrl}/api/master/clients`, {
+    method: "POST",
+    headers: {
+      cookie: roleCookies.get("Operations Manager"),
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      name: managedClientName,
+      contactName: "RBAC Test",
+      address: "1 Test Street, Singapore 000001",
+    }),
+  });
+  assert.equal(managerMasterCreate.status, 201);
+  const managerWorkspace = await managerMasterCreate.json();
+  const managedClient = managerWorkspace.clients.find(
+    (client) => client.name === managedClientName,
+  );
+  assert.ok(managedClient);
+
+  for (const role of ["Service Technician", "Viewer"]) {
+    const masterAttempt = await fetch(`${baseUrl}/api/master/clients`, {
+      method: "POST",
+      headers: {
+        cookie: roleCookies.get(role),
+        "content-type": "application/json",
+        origin: baseUrl,
+      },
+      body: JSON.stringify({
+        name: `Forbidden ${role}`,
+        address: "1 Test Street, Singapore 000001",
+      }),
+    });
+    assert.equal(masterAttempt.status, 403, `${role} must not manage master data`);
+  }
+
+  const managerMasterDelete = await fetch(
+    `${baseUrl}/api/master/clients/${encodeURIComponent(managedClient.id)}`,
+    {
+      method: "DELETE",
+      headers: {
+        cookie: roleCookies.get("Operations Manager"),
+        origin: baseUrl,
+      },
+    },
+  );
+  assert.equal(managerMasterDelete.status, 200);
 
   const profileUpdate = await fetch(`${baseUrl}/api/profile`, {
     method: "PUT",
     headers: {
-      cookie: viewerCookie,
+      cookie: roleCookies.get("Viewer"),
       "content-type": "application/json",
       origin: baseUrl,
     },
@@ -206,17 +330,19 @@ test("server renders the MongoDB-backed Promach workspace", async (context) => {
   });
   assert.equal(profileUpdate.status, 200);
 
-  const deleteUserResponse = await fetch(
-    `${baseUrl}/api/users/${encodeURIComponent(createdUser.id)}`,
-    {
-      method: "DELETE",
-      headers: {
-        cookie: sessionCookie,
-        origin: baseUrl,
+  for (const createdUser of createdUsers) {
+    const deleteUserResponse = await fetch(
+      `${baseUrl}/api/users/${encodeURIComponent(createdUser.id)}`,
+      {
+        method: "DELETE",
+        headers: {
+          cookie: sessionCookie,
+          origin: baseUrl,
+        },
       },
-    },
-  );
-  assert.equal(deleteUserResponse.status, 200);
+    );
+    assert.equal(deleteUserResponse.status, 200);
+  }
 
   const logout = await fetch(`${baseUrl}/api/auth/logout`, {
     method: "POST",

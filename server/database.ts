@@ -1,9 +1,3 @@
-import type {
-  AnyBulkWriteOperation,
-  Collection,
-  Filter,
-  OptionalUnlessRequiredId,
-} from "mongodb";
 import { createInitialWorkspace } from "../app/workspaceSeed.ts";
 import type {
   ChecklistTemplateRecord,
@@ -19,7 +13,7 @@ import type {
 } from "../app/workspaceTypes.ts";
 import type { CompanyProfile } from "../app/reportData.ts";
 import { hashPassword, verifyPassword } from "./adminAuth.ts";
-import { mongoDatabase } from "./mongodb.ts";
+import { query } from "./postgres.ts";
 
 export type MasterRecord =
   | ClientRecord
@@ -29,625 +23,347 @@ export type MasterRecord =
   | TechnicianRecord
   | ServiceTypeRecord;
 
-type StoredRecord<T extends { id: string }> = Omit<T, "id"> & { _id: string };
-type StoredCompany = CompanyProfile & { _id: "promach" };
-type StoredReport = StoredRecord<WorkspaceReport> & {
-  shareTokenHash?: string | null;
-};
-type StoredState = {
-  _id: string;
-  initializedAt?: string;
-  schemaVersion?: number;
-  value?: number;
-};
-type StoredUser = Omit<UserRecord, "id"> & {
-  _id: string;
-  passwordHash: string;
+type StoredUserRow = {
+  id: string;
+  username: string;
+  email: string;
+  password_hash: string;
+  name: string;
+  phone: string | null;
+  designation: string | null;
+  role: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
-const collectionNames = {
-  company: "company_profiles",
+const tableNames: Record<MasterEntity, string> = {
   clients: "clients",
   locations: "locations",
   equipment: "equipment",
   "checklist-templates": "checklist_templates",
   technicians: "technicians",
   "service-types": "service_types",
-  reports: "service_reports",
-  users: "users",
-  state: "system_state",
-} as const;
+};
 
-function userFromStored(record: StoredUser): UserRecord {
+function userFromRow(row: StoredUserRow): UserRecord {
   return {
-    id: record._id,
-    username: record.username,
-    name: record.name,
-    email: record.email,
-    phone: record.phone,
-    designation: record.designation,
-    role: record.role,
-    active: record.active,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
+    id: row.id,
+    username: row.username,
+    name: row.name,
+    email: row.email,
+    phone: row.phone || "",
+    designation: row.designation || "",
+    role: row.role as UserRecord["role"],
+    active: row.active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
-function toStored<T extends { id: string }>(record: T): StoredRecord<T> {
-  const { id, ...value } = record;
-  return { _id: id, ...value } as StoredRecord<T>;
-}
-
-function fromStored<T extends { id: string }>(
-  record: StoredRecord<T>,
-): T {
-  const { _id, ...value } = record;
-  return { id: _id, ...value } as unknown as T;
-}
-
-function reportFromStored(record: StoredReport): WorkspaceReport {
-  const report = { ...record };
-  delete report.shareTokenHash;
-  return fromStored<WorkspaceReport>(report);
-}
-
-async function seedRecords<T extends { id: string }>(
-  collection: Collection<StoredRecord<T>>,
-  records: T[],
-): Promise<void> {
-  if (!records.length) return;
-  const operations = records.map((record) => ({
-      updateOne: {
-        filter: { _id: record.id } as Filter<StoredRecord<T>>,
-        update: { $setOnInsert: toStored(record) },
-        upsert: true,
-      },
-    })) as AnyBulkWriteOperation<StoredRecord<T>>[];
-  await collection.bulkWrite(operations, { ordered: false });
-}
-
 export async function ensureDatabase(): Promise<void> {
-  const db = await mongoDatabase();
-  await Promise.all([
-    db.collection(collectionNames["service-types"]).createIndex(
-      { name: 1 },
-      {
-        name: "service_types_name_unique",
-        unique: true,
-        collation: { locale: "en", strength: 2 },
-      },
-    ),
-    db.collection(collectionNames.reports).createIndex(
-      { shareTokenHash: 1 },
-      {
-        name: "reports_share_token_unique",
-        unique: true,
-        sparse: true,
-      },
-    ),
-    db
-      .collection(collectionNames.locations)
-      .createIndex({ clientId: 1 }, { name: "locations_client" }),
-    db.collection(collectionNames.equipment).createIndex(
-      { clientId: 1, locationId: 1 },
-      { name: "equipment_client_location" },
-    ),
-    db
-      .collection(collectionNames.reports)
-      .createIndex({ status: 1 }, { name: "reports_status" }),
-    db.collection<StoredUser>(collectionNames.users).createIndex(
-      { username: 1 },
-      {
-        name: "users_username_unique",
-        unique: true,
-        collation: { locale: "en", strength: 2 },
-      },
-    ),
-    db.collection<StoredUser>(collectionNames.users).createIndex(
-      { email: 1 },
-      {
-        name: "users_email_unique",
-        unique: true,
-        collation: { locale: "en", strength: 2 },
-      },
-    ),
-  ]);
-
-  const stateCollection = db.collection<StoredState>(collectionNames.state);
-  const initialized = await stateCollection.findOne({
-    _id: "workspace-seed-v1",
-  });
-  const seed = createInitialWorkspace();
-  if (!initialized) {
-    await db.collection<StoredCompany>(collectionNames.company).updateOne(
-      { _id: "promach" },
-      {
-        $setOnInsert: {
-          _id: "promach",
-          ...seed.company,
-        } satisfies StoredCompany,
-      },
-      { upsert: true },
+  await query(`
+    CREATE TABLE IF NOT EXISTS company_profiles (
+      id TEXT PRIMARY KEY,
+      data JSONB NOT NULL
     );
-    await Promise.all([
-      seedRecords(
-        db.collection<StoredRecord<ClientRecord>>(collectionNames.clients),
-        seed.clients,
-      ),
-      seedRecords(
-        db.collection<StoredRecord<LocationRecord>>(collectionNames.locations),
-        seed.locations,
-      ),
-      seedRecords(
-        db.collection<StoredRecord<EquipmentRecord>>(collectionNames.equipment),
-        seed.equipment,
-      ),
-      seedRecords(
-        db.collection<StoredRecord<ChecklistTemplateRecord>>(
-          collectionNames["checklist-templates"],
-        ),
-        seed.checklistTemplates,
-      ),
-      seedRecords(
-        db.collection<StoredRecord<TechnicianRecord>>(
-          collectionNames.technicians,
-        ),
-        seed.technicians,
-      ),
-      seedRecords(
-        db.collection<StoredRecord<ServiceTypeRecord>>(
-          collectionNames["service-types"],
-        ),
-        seed.serviceTypes,
-      ),
-      seedRecords(
-        db.collection<StoredReport>(collectionNames.reports),
-        seed.reports,
-      ),
-    ]);
-    await stateCollection.updateOne(
-      { _id: "workspace-seed-v1" },
-      {
-        $setOnInsert: {
-          _id: "workspace-seed-v1",
-          initializedAt: new Date().toISOString(),
-          schemaVersion: 1,
-        },
-      },
-      { upsert: true },
-    );
-  }
 
-  const usersCollection = db.collection<StoredUser>(collectionNames.users);
-  if ((await usersCollection.countDocuments({})) === 0) {
-    const now = new Date().toISOString();
-    const username = process.env.ADMIN_USERNAME?.trim() || "promach-admin";
-    const password = process.env.ADMIN_PASSWORD;
-    if (!password) {
-      throw new Error(
-        "ADMIN_PASSWORD is required to create the first administrator account.",
+    CREATE TABLE IF NOT EXISTS clients (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      data JSONB NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS locations (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      data JSONB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_locations_client ON locations(client_id);
+
+    CREATE TABLE IF NOT EXISTS equipment (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      location_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      data JSONB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_equipment_client_location ON equipment(client_id, location_id);
+
+    CREATE TABLE IF NOT EXISTS checklist_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      data JSONB NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS technicians (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      data JSONB NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS service_types (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      active BOOLEAN NOT NULL DEFAULT true,
+      data JSONB NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_service_types_name_unique ON service_types(LOWER(name));
+
+    CREATE TABLE IF NOT EXISTS service_reports (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      share_token_hash TEXT,
+      data JSONB NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_service_reports_share_token ON service_reports(share_token_hash) WHERE share_token_hash IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_service_reports_status ON service_reports(status);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      email TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      phone TEXT,
+      designation TEXT,
+      role TEXT NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(LOWER(username));
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(LOWER(email));
+
+    CREATE TABLE IF NOT EXISTS system_state (
+      id TEXT PRIMARY KEY,
+      value BIGINT,
+      schema_version INT,
+      initialized_at TEXT
+    );
+  `);
+
+  const initCheck = await query<{ id: string }>(
+    "SELECT id FROM system_state WHERE id = 'workspace-seed-v1';",
+  );
+
+  if (initCheck.rowCount === 0) {
+    const seed = createInitialWorkspace();
+
+    await query(
+      `INSERT INTO company_profiles (id, data) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING;`,
+      ["promach", JSON.stringify({ id: "promach", ...seed.company })],
+    );
+
+    for (const client of seed.clients) {
+      await query(
+        `INSERT INTO clients (id, name, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
+        [client.id, client.name, JSON.stringify(client)],
       );
     }
-    await usersCollection.insertOne({
-      _id: "bootstrap-admin",
-      username,
-      passwordHash: hashPassword(password),
-      name: process.env.ADMIN_NAME?.trim() || "Promach Admin",
-      email: process.env.ADMIN_EMAIL?.trim() || "admin@promach.local",
-      phone: "",
-      designation: "System Administrator",
-      role: "Administrator",
-      active: true,
-      createdAt: now,
-      updatedAt: now,
-    });
+    for (const location of seed.locations) {
+      await query(
+        `INSERT INTO locations (id, client_id, name, data) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING;`,
+        [location.id, location.clientId, location.name, JSON.stringify(location)],
+      );
+    }
+    for (const eq of seed.equipment) {
+      await query(
+        `INSERT INTO equipment (id, client_id, location_id, name, data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING;`,
+        [eq.id, eq.clientId, eq.locationId, eq.name, JSON.stringify(eq)],
+      );
+    }
+    for (const template of seed.checklistTemplates) {
+      await query(
+        `INSERT INTO checklist_templates (id, name, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
+        [template.id, template.name, JSON.stringify(template)],
+      );
+    }
+    for (const tech of seed.technicians) {
+      await query(
+        `INSERT INTO technicians (id, name, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
+        [tech.id, tech.name, JSON.stringify(tech)],
+      );
+    }
+    for (const st of seed.serviceTypes) {
+      await query(
+        `INSERT INTO service_types (id, name, description, active, data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING;`,
+        [st.id, st.name, st.description, st.active, JSON.stringify(st)],
+      );
+    }
+    for (const rep of seed.reports) {
+      await query(
+        `INSERT INTO service_reports (id, status, share_token_hash, data) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING;`,
+        [rep.id, rep.status, null, JSON.stringify(rep)],
+      );
+    }
+
+    await query(
+      `INSERT INTO system_state (id, schema_version, initialized_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
+      ["workspace-seed-v1", 1, new Date().toISOString()],
+    );
   }
 
-  const removedSourceConcept = await stateCollection.findOne({
-    _id: "remove-source-concept-v3",
-  });
-  if (!removedSourceConcept) {
-    const reportsCollection = db.collection(collectionNames.reports);
-    await Promise.all([
-      reportsCollection.updateMany(
-        {},
-        {
-          $unset: {
-            sourceDocument: "",
-            transcriptionNotes: "",
-            "acknowledgement.source": "",
-          },
-        },
-      ),
-      reportsCollection.updateMany(
-        { "signature.channel": "source_document" },
-        {
-          $set: {
-            "signature.channel": "admin_device",
-            "signature.consentText":
-              "Customer acknowledgement recorded in Promach DSR.",
-          },
-        },
-      ),
-      reportsCollection.updateMany(
-        { "auditTrail.channel": "source_document" },
-        {
-          $set: {
-            "auditTrail.$[legacy].channel": "admin_portal",
-            "auditTrail.$[legacy].action": "Historical report activity",
-            "auditTrail.$[legacy].detail":
-              "Report activity retained in the audit history.",
-          },
-        },
-        { arrayFilters: [{ "legacy.channel": "source_document" }] },
-      ),
-      reportsCollection.updateMany(
-        {},
+  const username = process.env.ADMIN_USERNAME?.trim() || "promach-admin";
+  const password = process.env.ADMIN_PASSWORD;
+  if (password) {
+    const existingUser = await query<{ id: string }>(
+      "SELECT id FROM users WHERE LOWER(username) = LOWER($1);",
+      [username],
+    );
+    if (existingUser.rowCount === 0) {
+      const now = new Date().toISOString();
+      await query(
+        `INSERT INTO users (id, username, email, password_hash, name, phone, designation, role, active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (id) DO NOTHING;`,
         [
-          {
-            $set: {
-              serviceType: {
-                $cond: [
-                  { $eq: ["$serviceType", "Not marked on source form"] },
-                  "Regular Service",
-                  "$serviceType",
-                ],
-              },
-              remarks: {
-                $cond: [
-                  {
-                    $eq: [
-                      "$remarks",
-                      "No remarks were entered on the source report.",
-                    ],
-                  },
-                  "No additional remarks.",
-                  "$remarks",
-                ],
-              },
-              technicians: {
-                $map: {
-                  input: "$technicians",
-                  as: "technician",
-                  in: {
-                    $trim: {
-                      input: {
-                        $replaceAll: {
-                          input: "$$technician",
-                          find: " (?)",
-                          replacement: "",
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              equipment: {
-                $map: {
-                  input: "$equipment",
-                  as: "item",
-                  in: {
-                    $mergeObjects: [
-                      "$$item",
-                      {
-                        model: {
-                          $trim: {
-                            input: {
-                              $replaceAll: {
-                                input: "$$item.model",
-                                find: " (?)",
-                                replacement: "",
-                              },
-                            },
-                          },
-                        },
-                      },
-                    ],
-                  },
-                },
-              },
-              acknowledgement: {
-                $mergeObjects: [
-                  "$acknowledgement",
-                  {
-                    name: {
-                      $cond: [
-                        {
-                          $eq: [
-                            "$acknowledgement.name",
-                            "Customer name not legible on source scan",
-                          ],
-                        },
-                        "Authorised Customer Representative",
-                        "$acknowledgement.name",
-                      ],
-                    },
-                  },
-                ],
-              },
-              signature: {
-                $cond: [
-                  {
-                    $eq: [
-                      "$signature.signerName",
-                      "Customer name not legible on source scan",
-                    ],
-                  },
-                  {
-                    $mergeObjects: [
-                      "$signature",
-                      { signerName: "Authorised Customer Representative" },
-                    ],
-                  },
-                  "$signature",
-                ],
-              },
-              auditTrail: {
-                $map: {
-                  input: "$auditTrail",
-                  as: "event",
-                  in: {
-                    $mergeObjects: [
-                      "$$event",
-                      {
-                        actorName: {
-                          $cond: [
-                            {
-                              $eq: [
-                                "$$event.actorName",
-                                "Customer name not legible on source scan",
-                              ],
-                            },
-                            "Authorised Customer Representative",
-                            "$$event.actorName",
-                          ],
-                        },
-                      },
-                    ],
-                  },
-                },
-              },
-            },
-          },
+          `bootstrap-${username}`,
+          username,
+          process.env.ADMIN_EMAIL?.trim() || `${username}@promach.local`,
+          hashPassword(password),
+          process.env.ADMIN_NAME?.trim() || "Promach Admin",
+          "",
+          "System Administrator",
+          "Administrator",
+          true,
+          now,
+          now,
         ],
-      ),
-    ]);
-    await stateCollection.updateOne(
-      { _id: "remove-source-concept-v3" },
-      {
-        $setOnInsert: {
-          _id: "remove-source-concept-v3",
-          initializedAt: new Date().toISOString(),
-          schemaVersion: 2,
-        },
-      },
-      { upsert: true },
-    );
+      );
+    }
   }
 
-  const reportImagesInitialized = await stateCollection.findOne({
-    _id: "report-images-v1",
-  });
-  if (!reportImagesInitialized) {
-    await db.collection(collectionNames.reports).updateMany(
-      { images: { $exists: false } },
-      { $set: { images: [] } },
-    );
-    await stateCollection.updateOne(
-      { _id: "report-images-v1" },
-      {
-        $setOnInsert: {
-          _id: "report-images-v1",
-          initializedAt: new Date().toISOString(),
-          schemaVersion: 3,
-        },
-      },
-      { upsert: true },
-    );
-  }
-
-  const legacyMarkersCleaned = await stateCollection.findOne({
-    _id: "clean-legacy-markers-v1",
-  });
-  if (!legacyMarkersCleaned) {
-    await Promise.all([
-      db.collection(collectionNames.equipment).updateMany(
-        {},
-        [
-          {
-            $set: {
-              model: {
-                $trim: {
-                  input: {
-                    $replaceAll: {
-                      input: { $ifNull: ["$model", ""] },
-                      find: " (?)",
-                      replacement: "",
-                    },
-                  },
-                },
-              },
-              serial: {
-                $trim: {
-                  input: {
-                    $replaceAll: {
-                      input: { $ifNull: ["$serial", ""] },
-                      find: " (?)",
-                      replacement: "",
-                    },
-                  },
-                },
-              },
-            },
-          },
-        ],
-      ),
-      db.collection(collectionNames.reports).updateMany(
-        {},
-        [
-          {
-            $set: {
-              equipment: {
-                $map: {
-                  input: { $ifNull: ["$equipment", []] },
-                  as: "item",
-                  in: {
-                    $mergeObjects: [
-                      "$$item",
-                      {
-                        model: {
-                          $trim: {
-                            input: {
-                              $replaceAll: {
-                                input: { $ifNull: ["$$item.model", ""] },
-                                find: " (?)",
-                                replacement: "",
-                              },
-                            },
-                          },
-                        },
-                        serial: {
-                          $trim: {
-                            input: {
-                              $replaceAll: {
-                                input: { $ifNull: ["$$item.serial", ""] },
-                                find: " (?)",
-                                replacement: "",
-                              },
-                            },
-                          },
-                        },
-                      },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        ],
-      ),
-    ]);
-    await stateCollection.updateOne(
-      { _id: "clean-legacy-markers-v1" },
-      {
-        $setOnInsert: {
-          _id: "clean-legacy-markers-v1",
-          initializedAt: new Date().toISOString(),
-          schemaVersion: 3,
-        },
-      },
-      { upsert: true },
-    );
-  }
-
-  const reportIds = await db
-    .collection<StoredReport>(collectionNames.reports)
-    .find({}, { projection: { _id: 1 } })
-    .toArray();
-  const highestReportNumber = reportIds.reduce(
-    (maximum, report) =>
-      Math.max(maximum, Number.parseInt(String(report._id), 10) || 0),
+  const reportIdsRes = await query<{ id: string }>(
+    "SELECT id FROM service_reports;",
+  );
+  const highestReportNumber = reportIdsRes.rows.reduce(
+    (maximum, row) =>
+      Math.max(maximum, Number.parseInt(String(row.id), 10) || 0),
     4122,
   );
-  await stateCollection.updateOne(
-    { _id: "report-number" },
-    { $max: { value: highestReportNumber } },
-    { upsert: true },
-  );
-}
 
-async function storedRecords<T extends { id: string }>(
-  collectionName: string,
-): Promise<T[]> {
-  const db = await mongoDatabase();
-  const records = await db
-    .collection<StoredRecord<T>>(collectionName)
-    .find({})
-    .toArray();
-  return records.map((record) =>
-    fromStored<T>(record as unknown as StoredRecord<T>),
+  await query(
+    `INSERT INTO system_state (id, value)
+     VALUES ('report-number', $1)
+     ON CONFLICT (id) DO UPDATE SET value = GREATEST(system_state.value, EXCLUDED.value);`,
+    [highestReportNumber],
   );
 }
 
 export async function readWorkspace(): Promise<WorkspaceSnapshot> {
   await ensureDatabase();
-  const db = await mongoDatabase();
   const [
-    companyDocument,
-    clients,
-    locations,
-    equipment,
-    checklistTemplates,
-    technicians,
-    serviceTypes,
-    storedReports,
+    companyRes,
+    clientsRes,
+    locationsRes,
+    equipmentRes,
+    templatesRes,
+    techsRes,
+    typesRes,
+    reportsRes,
   ] = await Promise.all([
-    db.collection<StoredCompany>(collectionNames.company).findOne({
-      _id: "promach",
-    }),
-    storedRecords<ClientRecord>(collectionNames.clients),
-    storedRecords<LocationRecord>(collectionNames.locations),
-    storedRecords<EquipmentRecord>(collectionNames.equipment),
-    storedRecords<ChecklistTemplateRecord>(
-      collectionNames["checklist-templates"],
+    query<{ data: CompanyProfile }>(
+      "SELECT data FROM company_profiles WHERE id = 'promach';",
     ),
-    storedRecords<TechnicianRecord>(collectionNames.technicians),
-    storedRecords<ServiceTypeRecord>(collectionNames["service-types"]),
-    db
-      .collection<StoredReport>(collectionNames.reports)
-      .find({})
-      .toArray(),
+    query<{ data: ClientRecord }>("SELECT data FROM clients ORDER BY name ASC;"),
+    query<{ data: LocationRecord }>(
+      "SELECT data FROM locations ORDER BY name ASC;",
+    ),
+    query<{ data: EquipmentRecord }>(
+      "SELECT data FROM equipment ORDER BY name ASC;",
+    ),
+    query<{ data: ChecklistTemplateRecord }>(
+      "SELECT data FROM checklist_templates ORDER BY name ASC;",
+    ),
+    query<{ data: TechnicianRecord }>(
+      "SELECT data FROM technicians ORDER BY name ASC;",
+    ),
+    query<{ data: ServiceTypeRecord }>(
+      "SELECT data FROM service_types ORDER BY name ASC;",
+    ),
+    query<{ data: WorkspaceReport }>(
+      "SELECT data FROM service_reports ORDER BY (CASE WHEN id ~ '^[0-9]+$' THEN id::bigint ELSE 0 END) DESC;",
+    ),
   ]);
-  if (!companyDocument) throw new Error("Company profile is not initialized.");
+
+  if (!companyRes.rows[0]?.data) {
+    throw new Error("Company profile is not initialized.");
+  }
+
+  const companyDoc = companyRes.rows[0].data;
   const company: CompanyProfile = {
-    name: companyDocument.name,
-    address: companyDocument.address,
-    phone: companyDocument.phone,
-    email: companyDocument.email,
-    website: companyDocument.website,
-    registration: companyDocument.registration,
+    name: companyDoc.name,
+    address: companyDoc.address,
+    phone: companyDoc.phone,
+    email: companyDoc.email,
+    website: companyDoc.website,
+    registration: companyDoc.registration,
   };
-  const byName = <T extends { name: string }>(left: T, right: T) =>
-    left.name.localeCompare(right.name);
+
   return {
     company,
-    clients: clients.sort(byName),
-    locations: locations.sort(byName),
-    equipment: equipment.sort(byName),
-    checklistTemplates: checklistTemplates.sort(byName),
-    technicians: technicians.sort(byName),
-    serviceTypes: serviceTypes.sort(byName),
-    reports: storedReports
-      .map(reportFromStored)
-      .sort((left, right) => Number(right.id) - Number(left.id)),
+    clients: clientsRes.rows.map((r) => r.data),
+    locations: locationsRes.rows.map((r) => r.data),
+    equipment: equipmentRes.rows.map((r) => r.data),
+    checklistTemplates: templatesRes.rows.map((r) => r.data),
+    technicians: techsRes.rows.map((r) => r.data),
+    serviceTypes: typesRes.rows.map((r) => r.data),
+    reports: reportsRes.rows.map((r) => {
+      const rep = { ...r.data };
+      delete (rep as { shareTokenHash?: string | null }).shareTokenHash;
+      return rep;
+    }),
   };
-}
-
-function masterCollectionName(entity: MasterEntity): string {
-  return collectionNames[entity];
 }
 
 export async function findMasterRecord(
   entity: MasterEntity,
   id: string,
 ): Promise<MasterRecord | null> {
-  const db = await mongoDatabase();
-  const stored = await db
-    .collection<StoredRecord<MasterRecord>>(masterCollectionName(entity))
-    .findOne({ _id: id });
-  return stored ? fromStored<MasterRecord>(stored) : null;
+  const table = tableNames[entity];
+  const res = await query<{ data: MasterRecord }>(
+    `SELECT data FROM ${table} WHERE id = $1;`,
+    [id],
+  );
+  return res.rows[0]?.data || null;
 }
 
 export async function insertMasterRecord(
   entity: MasterEntity,
   record: MasterRecord,
 ): Promise<void> {
-  const db = await mongoDatabase();
-  await db
-    .collection<StoredRecord<MasterRecord>>(masterCollectionName(entity))
-    .insertOne(
-      toStored(record) as OptionalUnlessRequiredId<StoredRecord<MasterRecord>>,
+  const table = tableNames[entity];
+  const id = record.id;
+  const name = record.name;
+  const data = JSON.stringify(record);
+
+  if (entity === "locations") {
+    const loc = record as LocationRecord;
+    await query(
+      `INSERT INTO locations (id, client_id, name, data) VALUES ($1, $2, $3, $4);`,
+      [id, loc.clientId, name, data],
     );
+  } else if (entity === "equipment") {
+    const eq = record as EquipmentRecord;
+    await query(
+      `INSERT INTO equipment (id, client_id, location_id, name, data) VALUES ($1, $2, $3, $4, $5);`,
+      [id, eq.clientId, eq.locationId, name, data],
+    );
+  } else if (entity === "service-types") {
+    const st = record as ServiceTypeRecord;
+    await query(
+      `INSERT INTO service_types (id, name, description, active, data) VALUES ($1, $2, $3, $4, $5);`,
+      [id, name, st.description, st.active, data],
+    );
+  } else {
+    await query(
+      `INSERT INTO ${table} (id, name, data) VALUES ($1, $2, $3);`,
+      [id, name, data],
+    );
+  }
 }
 
 export async function replaceMasterRecord(
@@ -655,72 +371,90 @@ export async function replaceMasterRecord(
   id: string,
   record: MasterRecord,
 ): Promise<boolean> {
-  const db = await mongoDatabase();
-  const result = await db
-    .collection<StoredRecord<MasterRecord>>(masterCollectionName(entity))
-    .replaceOne({ _id: id }, toStored(record));
-  return result.matchedCount === 1;
+  const table = tableNames[entity];
+  const name = record.name;
+  const data = JSON.stringify(record);
+
+  let res;
+  if (entity === "locations") {
+    const loc = record as LocationRecord;
+    res = await query(
+      `UPDATE locations SET client_id = $2, name = $3, data = $4 WHERE id = $1;`,
+      [id, loc.clientId, name, data],
+    );
+  } else if (entity === "equipment") {
+    const eq = record as EquipmentRecord;
+    res = await query(
+      `UPDATE equipment SET client_id = $2, location_id = $3, name = $4, data = $5 WHERE id = $1;`,
+      [id, eq.clientId, eq.locationId, name, data],
+    );
+  } else if (entity === "service-types") {
+    const st = record as ServiceTypeRecord;
+    res = await query(
+      `UPDATE service_types SET name = $2, description = $3, active = $4, data = $5 WHERE id = $1;`,
+      [id, name, st.description, st.active, data],
+    );
+  } else {
+    res = await query(
+      `UPDATE ${table} SET name = $2, data = $3 WHERE id = $1;`,
+      [id, name, data],
+    );
+  }
+
+  return (res.rowCount ?? 0) === 1;
 }
 
 export async function removeMasterRecord(
   entity: MasterEntity,
   id: string,
 ): Promise<boolean> {
-  const db = await mongoDatabase();
-  const result = await db
-    .collection<{ _id: string }>(masterCollectionName(entity))
-    .deleteOne({ _id: id });
-  return result.deletedCount === 1;
+  const table = tableNames[entity];
+  const res = await query(`DELETE FROM ${table} WHERE id = $1;`, [id]);
+  return (res.rowCount ?? 0) === 1;
 }
 
 export async function serviceTypeNameExists(
   name: string,
   excludedId?: string,
 ): Promise<boolean> {
-  const db = await mongoDatabase();
-  const filter: Filter<StoredRecord<ServiceTypeRecord>> = {
-    name: { $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
-  };
-  if (excludedId) filter._id = { $ne: excludedId };
-  return Boolean(
-    await db
-      .collection<StoredRecord<ServiceTypeRecord>>(
-        collectionNames["service-types"],
-      )
-      .findOne(filter, { projection: { _id: 1 } }),
+  const res = await query<{ id: string }>(
+    `SELECT id FROM service_types WHERE LOWER(name) = LOWER($1) AND ($2::text IS NULL OR id != $2);`,
+    [name.trim(), excludedId || null],
   );
+  return res.rowCount !== null && res.rowCount > 0;
 }
 
 export async function nextReportNumber(): Promise<string> {
-  const db = await mongoDatabase();
-  const counter = await db
-    .collection<StoredState>(collectionNames.state)
-    .findOneAndUpdate(
-      { _id: "report-number" },
-      { $inc: { value: 1 } },
-      { upsert: true, returnDocument: "after" },
-    );
-  if (!counter?.value) {
+  const res = await query<{ value: string }>(
+    `INSERT INTO system_state (id, value)
+     VALUES ('report-number', 4123)
+     ON CONFLICT (id) DO UPDATE SET value = system_state.value + 1
+     RETURNING value;`,
+  );
+  if (!res.rows[0]?.value) {
     throw new Error("Unable to allocate a service report number.");
   }
-  return String(counter.value);
+  return String(res.rows[0].value);
 }
 
 export async function insertReport(report: WorkspaceReport): Promise<void> {
-  const db = await mongoDatabase();
-  await db
-    .collection<StoredReport>(collectionNames.reports)
-    .insertOne(toStored(report) as OptionalUnlessRequiredId<StoredReport>);
+  await query(
+    `INSERT INTO service_reports (id, status, share_token_hash, data) VALUES ($1, $2, $3, $4);`,
+    [report.id, report.status, null, JSON.stringify(report)],
+  );
 }
 
 export async function findReport(
   reportId: string,
 ): Promise<WorkspaceReport | null> {
-  const db = await mongoDatabase();
-  const report = await db
-    .collection<StoredReport>(collectionNames.reports)
-    .findOne({ _id: reportId });
-  return report ? reportFromStored(report) : null;
+  const res = await query<{ data: WorkspaceReport }>(
+    `SELECT data FROM service_reports WHERE id = $1;`,
+    [reportId],
+  );
+  if (!res.rows[0]?.data) return null;
+  const rep = { ...res.rows[0].data };
+  delete (rep as { shareTokenHash?: string | null }).shareTokenHash;
+  return rep;
 }
 
 export async function issueReportShareLink(
@@ -729,13 +463,12 @@ export async function issueReportShareLink(
   sentAt: string,
   auditEvent: WorkspaceReport["auditTrail"][number],
 ): Promise<"updated" | "missing" | "locked"> {
-  const db = await mongoDatabase();
-  const collection = db.collection<StoredReport>(collectionNames.reports);
-  const current = await collection.findOne(
-    { _id: reportId },
-    { projection: { status: 1 } },
+  const currentRes = await query<{ status: string; data: WorkspaceReport }>(
+    `SELECT status, data FROM service_reports WHERE id = $1;`,
+    [reportId],
   );
-  if (!current) return "missing";
+  if (currentRes.rowCount === 0) return "missing";
+  const current = currentRes.rows[0];
   if (
     !["Draft", "Correction required", "Awaiting client signature"].includes(
       current.status,
@@ -743,31 +476,38 @@ export async function issueReportShareLink(
   ) {
     return "locked";
   }
-  const result = await collection.updateOne(
-    { _id: reportId, status: current.status },
-    {
-      $set: {
-        status: "Awaiting client signature",
-        shareTokenHash,
-        sentAt,
-      },
-      $push: { auditTrail: auditEvent },
-    },
+
+  const updatedReport: WorkspaceReport = {
+    ...current.data,
+    status: "Awaiting client signature",
+    sentAt,
+    auditTrail: [...(current.data.auditTrail || []), auditEvent],
+  };
+
+  const res = await query(
+    `UPDATE service_reports
+     SET status = 'Awaiting client signature',
+         share_token_hash = $2,
+         data = $3
+     WHERE id = $1 AND status = $4;`,
+    [reportId, shareTokenHash, JSON.stringify(updatedReport), current.status],
   );
-  return result.modifiedCount === 1 ? "updated" : "locked";
+
+  return (res.rowCount ?? 0) === 1 ? "updated" : "locked";
 }
 
 export async function findReportByShareHash(
   shareTokenHash: string,
 ): Promise<WorkspaceReport | null> {
-  const db = await mongoDatabase();
-  const report = await db
-    .collection<StoredReport>(collectionNames.reports)
-    .findOne({
-      shareTokenHash,
-      status: { $in: ["Awaiting client signature", "Completed"] },
-    });
-  return report ? reportFromStored(report) : null;
+  const res = await query<{ data: WorkspaceReport }>(
+    `SELECT data FROM service_reports
+     WHERE share_token_hash = $1 AND status IN ('Awaiting client signature', 'Completed');`,
+    [shareTokenHash],
+  );
+  if (!res.rows[0]?.data) return null;
+  const rep = { ...res.rows[0].data };
+  delete (rep as { shareTokenHash?: string | null }).shareTokenHash;
+  return rep;
 }
 
 export async function completeReportSignature(
@@ -776,72 +516,84 @@ export async function completeReportSignature(
   acknowledgement: WorkspaceReport["acknowledgement"],
   auditEvent: WorkspaceReport["auditTrail"][number],
 ): Promise<"updated" | "missing" | "invalid-status"> {
-  const db = await mongoDatabase();
-  const collection = db.collection<StoredReport>(collectionNames.reports);
-  const current = await collection.findOne(
-    { _id: reportId },
-    { projection: { status: 1 } },
+  const currentRes = await query<{ status: string; data: WorkspaceReport }>(
+    `SELECT status, data FROM service_reports WHERE id = $1;`,
+    [reportId],
   );
-  if (!current) return "missing";
+  if (currentRes.rowCount === 0) return "missing";
+  const current = currentRes.rows[0];
   if (current.status !== "Awaiting client signature") return "invalid-status";
-  const result = await collection.updateOne(
-    { _id: reportId, status: "Awaiting client signature" },
-    {
-      $set: {
-        signature,
-        acknowledgement,
-        status: "Completed",
-      },
-      $push: { auditTrail: auditEvent },
-    },
+
+  const updatedReport: WorkspaceReport = {
+    ...current.data,
+    status: "Completed",
+    signature,
+    acknowledgement,
+    auditTrail: [...(current.data.auditTrail || []), auditEvent],
+  };
+
+  const res = await query(
+    `UPDATE service_reports
+     SET status = 'Completed',
+         data = $2
+     WHERE id = $1 AND status = 'Awaiting client signature';`,
+    [reportId, JSON.stringify(updatedReport)],
   );
-  return result.modifiedCount === 1 ? "updated" : "invalid-status";
+
+  return (res.rowCount ?? 0) === 1 ? "updated" : "invalid-status";
 }
 
 export async function authenticateUser(
   username: string,
   password: string,
 ): Promise<UserRecord | null> {
-  const db = await mongoDatabase();
-  const user = await db.collection<StoredUser>(collectionNames.users).findOne(
-    { username },
-    { collation: { locale: "en", strength: 2 } },
+  const res = await query<StoredUserRow>(
+    `SELECT * FROM users WHERE LOWER(username) = LOWER($1) AND active = true;`,
+    [username.trim()],
   );
-  if (!user || !user.active || !verifyPassword(password, user.passwordHash)) {
+  const user = res.rows[0];
+  if (!user || !verifyPassword(password, user.password_hash)) {
     return null;
   }
-  return userFromStored(user);
+  return userFromRow(user);
 }
 
 export async function readUsers(): Promise<UserRecord[]> {
-  const db = await mongoDatabase();
-  const users = await db
-    .collection<StoredUser>(collectionNames.users)
-    .find({})
-    .sort({ name: 1 })
-    .toArray();
-  return users.map(userFromStored);
+  const res = await query<StoredUserRow>(
+    `SELECT * FROM users ORDER BY name ASC;`,
+  );
+  return res.rows.map(userFromRow);
 }
 
 export async function findUser(userId: string): Promise<UserRecord | null> {
-  const db = await mongoDatabase();
-  const user = await db
-    .collection<StoredUser>(collectionNames.users)
-    .findOne({ _id: userId });
-  return user ? userFromStored(user) : null;
+  const res = await query<StoredUserRow>(
+    `SELECT * FROM users WHERE id = $1;`,
+    [userId],
+  );
+  return res.rows[0] ? userFromRow(res.rows[0]) : null;
 }
 
 export async function insertUser(
   record: UserRecord,
   password: string,
 ): Promise<void> {
-  const db = await mongoDatabase();
-  const { id, ...value } = record;
-  await db.collection<StoredUser>(collectionNames.users).insertOne({
-    _id: id,
-    ...value,
-    passwordHash: hashPassword(password),
-  });
+  await query(
+    `INSERT INTO users (id, username, email, password_hash, name, phone, designation, role, active, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);`,
+    [
+      record.id,
+      record.username,
+      record.email,
+      hashPassword(password),
+      record.name,
+      record.phone || "",
+      record.designation || "",
+      record.role,
+      record.active,
+      record.createdAt,
+      record.updatedAt,
+    ],
+  );
 }
 
 export async function replaceUser(
@@ -849,31 +601,59 @@ export async function replaceUser(
   record: UserRecord,
   password?: string,
 ): Promise<boolean> {
-  const db = await mongoDatabase();
-  const value: Omit<UserRecord, "id"> = {
-    username: record.username,
-    name: record.name,
-    email: record.email,
-    phone: record.phone,
-    designation: record.designation,
-    role: record.role,
-    active: record.active,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-  };
-  const update: {
-    $set: Omit<UserRecord, "id">;
-    $setOnInsert?: never;
-  } = { $set: value };
-  const result = password
-    ? await db.collection<StoredUser>(collectionNames.users).updateOne(
-        { _id: userId },
-        { $set: { ...value, passwordHash: hashPassword(password) } },
-      )
-    : await db
-        .collection<StoredUser>(collectionNames.users)
-        .updateOne({ _id: userId }, update);
-  return result.matchedCount === 1;
+  let res;
+  if (password) {
+    res = await query(
+      `UPDATE users
+       SET username = $2,
+           email = $3,
+           name = $4,
+           phone = $5,
+           designation = $6,
+           role = $7,
+           active = $8,
+           updated_at = $9,
+           password_hash = $10
+       WHERE id = $1;`,
+      [
+        userId,
+        record.username,
+        record.email,
+        record.name,
+        record.phone || "",
+        record.designation || "",
+        record.role,
+        record.active,
+        record.updatedAt,
+        hashPassword(password),
+      ],
+    );
+  } else {
+    res = await query(
+      `UPDATE users
+       SET username = $2,
+           email = $3,
+           name = $4,
+           phone = $5,
+           designation = $6,
+           role = $7,
+           active = $8,
+           updated_at = $9
+       WHERE id = $1;`,
+      [
+        userId,
+        record.username,
+        record.email,
+        record.name,
+        record.phone || "",
+        record.designation || "",
+        record.role,
+        record.active,
+        record.updatedAt,
+      ],
+    );
+  }
+  return (res.rowCount ?? 0) === 1;
 }
 
 export async function updateUserProfile(
@@ -881,28 +661,55 @@ export async function updateUserProfile(
   values: Pick<UserRecord, "name" | "email" | "phone" | "designation">,
   password?: string,
 ): Promise<UserRecord | null> {
-  const db = await mongoDatabase();
-  const $set: Partial<StoredUser> = {
-    ...values,
-    updatedAt: new Date().toISOString(),
-  };
-  if (password) $set.passwordHash = hashPassword(password);
-  const updated = await db
-    .collection<StoredUser>(collectionNames.users)
-    .findOneAndUpdate(
-      { _id: userId, active: true },
-      { $set },
-      { returnDocument: "after" },
+  const now = new Date().toISOString();
+  let res;
+  if (password) {
+    res = await query<StoredUserRow>(
+      `UPDATE users
+       SET name = $2,
+           email = $3,
+           phone = $4,
+           designation = $5,
+           updated_at = $6,
+           password_hash = $7
+       WHERE id = $1 AND active = true
+       RETURNING *;`,
+      [
+        userId,
+        values.name,
+        values.email,
+        values.phone || "",
+        values.designation || "",
+        now,
+        hashPassword(password),
+      ],
     );
-  return updated ? userFromStored(updated) : null;
+  } else {
+    res = await query<StoredUserRow>(
+      `UPDATE users
+       SET name = $2,
+           email = $3,
+           phone = $4,
+           designation = $5,
+           updated_at = $6
+       WHERE id = $1 AND active = true
+       RETURNING *;`,
+      [
+        userId,
+        values.name,
+        values.email,
+        values.phone || "",
+        values.designation || "",
+        now,
+      ],
+    );
+  }
+  return res.rows[0] ? userFromRow(res.rows[0]) : null;
 }
 
 export async function removeUser(userId: string): Promise<boolean> {
-  const db = await mongoDatabase();
-  const result = await db
-    .collection<StoredUser>(collectionNames.users)
-    .deleteOne({ _id: userId });
-  return result.deletedCount === 1;
+  const res = await query(`DELETE FROM users WHERE id = $1;`, [userId]);
+  return (res.rowCount ?? 0) === 1;
 }
 
 export async function userLoginExists(
@@ -910,20 +717,17 @@ export async function userLoginExists(
   email: string,
   excludedId?: string,
 ): Promise<"username" | "email" | null> {
-  const db = await mongoDatabase();
-  const base = excludedId ? { _id: { $ne: excludedId } } : {};
-  const usernameMatch = await db
-    .collection<StoredUser>(collectionNames.users)
-    .findOne(
-      { ...base, username },
-      { collation: { locale: "en", strength: 2 }, projection: { _id: 1 } },
-    );
-  if (usernameMatch) return "username";
-  const emailMatch = await db
-    .collection<StoredUser>(collectionNames.users)
-    .findOne(
-      { ...base, email },
-      { collation: { locale: "en", strength: 2 }, projection: { _id: 1 } },
-    );
-  return emailMatch ? "email" : null;
+  const userRes = await query<{ id: string }>(
+    `SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND ($2::text IS NULL OR id != $2);`,
+    [username.trim(), excludedId || null],
+  );
+  if ((userRes.rowCount ?? 0) > 0) return "username";
+
+  const emailRes = await query<{ id: string }>(
+    `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND ($2::text IS NULL OR id != $2);`,
+    [email.trim(), excludedId || null],
+  );
+  if ((emailRes.rowCount ?? 0) > 0) return "email";
+
+  return null;
 }

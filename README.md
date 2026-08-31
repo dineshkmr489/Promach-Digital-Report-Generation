@@ -5,7 +5,7 @@ maintaining master data, creating equipment service reports, securely sharing a
 single report with a client, collecting a digital signature, and downloading
 the completed signed PDF.
 
-All operational data is persisted in MongoDB:
+All operational data is persisted in Amazon RDS PostgreSQL:
 
 - company profile
 - clients and sites
@@ -25,13 +25,18 @@ Sites deployment configuration.
 Requirements:
 
 - Node.js 22.13 or newer
-- access to a MongoDB deployment
+- access to Amazon RDS PostgreSQL
 
 Copy `.env.example` to `.env.local` and configure:
 
 ```dotenv
-MONGODB_URI=mongodb+srv://USER:PASSWORD@HOST/report_gen
-MONGODB_DB=report_gen
+DATABASE_HOST=promach-report-gen-postgres.c3wg4uace6mu.ap-southeast-1.rds.amazonaws.com
+DATABASE_PORT=5432
+DATABASE_NAME=report_gen
+DATABASE_USER=promach_admin
+DATABASE_PASSWORD=replace-with-database-password
+# Or AWS Secrets Manager:
+# RDS_SECRET_ARN=arn:aws:secretsmanager:ap-southeast-1:ACCOUNT_ID:secret:SECRET_NAME
 APP_URL=http://localhost:3000
 ADMIN_USERNAME=promach-admin
 ADMIN_PASSWORD=use-a-long-random-password
@@ -99,7 +104,7 @@ Example systemd and nginx files are provided in:
 - `deploy/nginx-promach.conf.example`
 
 Before exposing the server, replace the example administrator password, allow
-the EC2 egress IP in MongoDB Atlas, terminate HTTPS at nginx or an AWS load
+the EC2 egress IP in the RDS Security Group, terminate HTTPS at nginx or an AWS load
 balancer, and restrict inbound security-group ports to SSH plus HTTP/HTTPS.
 
 ## Report signing
@@ -108,7 +113,7 @@ The admin workspace uses a branded sign-in page and a signed, HTTP-only
 12-hour session cookie. Eight unsuccessful sign-in attempts from one address
 temporarily lock further attempts for 15 minutes. A generated client signing
 URL remains public but contains a random, single-report token. Only the token
-hash is stored in MongoDB. Issuing a replacement link invalidates the previous
+hash is stored in the database. Issuing a replacement link invalidates the previous
 link. A completed report is locked and retains the signer identity, timestamp,
 consent text, signature image, channel, and audit trail.
 

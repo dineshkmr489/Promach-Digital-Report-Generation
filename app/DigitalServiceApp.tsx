@@ -16,6 +16,7 @@ import {
   FilePlus2,
   FileText,
   Gauge,
+  HardDrive,
   History,
   ImagePlus,
   Images,
@@ -29,7 +30,10 @@ import {
   PanelLeftOpen,
   PencilLine,
   Plus,
+  QrCode,
+  RefreshCw,
   Search,
+  ScanLine,
   Send,
   ShieldCheck,
   Signature,
@@ -48,6 +52,8 @@ import type { CompanyProfile, ServiceImage } from "./reportData";
 import { downloadServiceReportPdf } from "./reportPdf";
 import { PromachLoader } from "./PromachLoader";
 import { SignaturePad } from "./SignaturePad";
+import { FieldServiceFlow } from "./FieldServiceFlow";
+import { hasRolePermission } from "./rbac";
 import type {
   ChecklistTemplateRecord,
   ClientRecord,
@@ -66,11 +72,13 @@ import type {
 
 type View =
   | "overview"
+  | "field_service"
   | "reports"
   | "create"
   | "master"
   | "profile"
-  | "users";
+  | "users"
+  | "settings";
 type MasterTab = MasterEntity;
 type MasterRecord =
   | ClientRecord
@@ -79,6 +87,76 @@ type MasterRecord =
   | ChecklistTemplateRecord
   | TechnicianRecord
   | ServiceTypeRecord;
+
+type StorageObjectUsage = {
+  key: string;
+  versionId: string;
+  isLatest: boolean;
+  sizeBytes: number;
+  lastModified: string;
+  etag: string;
+  storageClass: string;
+  client: string;
+  category: string;
+  reportId: string | null;
+};
+
+type StorageUsage = {
+  bucket: string;
+  region: string;
+  totalBytes: number;
+  currentBytes: number;
+  noncurrentBytes: number;
+  objectCount: number;
+  versionCount: number;
+  measuredAt: string;
+  clientUsage: Array<{
+    client: string;
+    currentObjects: number;
+    versions: number;
+    currentBytes: number;
+    totalBytes: number;
+  }>;
+  objects: StorageObjectUsage[];
+};
+
+function exactBytes(sizeBytes: number): string {
+  return `${new Intl.NumberFormat("en-SG").format(sizeBytes)} B`;
+}
+
+function readableBytes(sizeBytes: number): string {
+  if (sizeBytes >= 1_073_741_824) {
+    return `${(sizeBytes / 1_073_741_824).toFixed(2)} GiB`;
+  }
+  if (sizeBytes >= 1_048_576) {
+    return `${(sizeBytes / 1_048_576).toFixed(2)} MiB`;
+  }
+  if (sizeBytes >= 1_024) {
+    return `${(sizeBytes / 1_024).toFixed(2)} KiB`;
+  }
+  return exactBytes(sizeBytes);
+}
+
+function singaporeDateTime(value: string): string {
+  return new Intl.DateTimeFormat("en-SG", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Singapore",
+  }).format(new Date(value));
+}
+
+async function requestStorageUsage(): Promise<StorageUsage> {
+  const response = await fetch("/api/storage", {
+    headers: { accept: "application/json" },
+  });
+  const payload = (await response.json()) as StorageUsage | { error: string };
+  if (!response.ok || "error" in payload) {
+    throw new Error(
+      "error" in payload ? payload.error : "Unable to measure S3 storage.",
+    );
+  }
+  return payload;
+}
 
 const MAX_SERVICE_IMAGES = 6;
 const MAX_SERVICE_IMAGE_BYTES = 900_000;
@@ -149,6 +227,7 @@ async function compressServiceImage(file: File): Promise<ServiceImage> {
 
 const navItems = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
+  { id: "field_service" as const, label: "Field Service (PDMS)", icon: QrCode },
   { id: "reports" as const, label: "Service reports", icon: FileText },
   { id: "create" as const, label: "Create report", icon: FilePlus2 },
   { id: "master" as const, label: "Master data", icon: Building2 },
@@ -157,6 +236,7 @@ const navItems = [
 const administrationNavItems = [
   { id: "profile" as const, label: "My profile", icon: UserRound },
   { id: "users" as const, label: "Users and roles", icon: UserCog },
+  { id: "settings" as const, label: "Storage utilised", icon: HardDrive },
 ];
 
 const roleDescriptions: Record<UserRole, string> = {
@@ -236,20 +316,34 @@ export function DigitalServiceApp({
     );
   }, [query, workspace.reports]);
 
-  const canManageMaster = ["Administrator", "Operations Manager"].includes(
+  const canManageMaster = hasRolePermission(currentUser.role, "master:manage");
+  const canCreateReports = hasRolePermission(
     currentUser.role,
+    "reports:operate",
   );
-  const canCreateReports = currentUser.role !== "Viewer";
+  const canUseFieldService = hasRolePermission(
+    currentUser.role,
+    "field-service:use",
+  );
   const availableNavItems = navItems.filter(
     (item) =>
       (item.id !== "create" || canCreateReports) &&
-      (item.id !== "master" || canManageMaster),
+      (item.id !== "master" || canManageMaster) &&
+      (item.id !== "field_service" || canUseFieldService),
   );
 
   function navigate(nextView: View) {
-    if (nextView === "users" && currentUser.role !== "Administrator") return;
+    if (
+      ((nextView === "users" &&
+        !hasRolePermission(currentUser.role, "users:manage")) ||
+        (nextView === "settings" &&
+          !hasRolePermission(currentUser.role, "storage:view")))
+    ) {
+      return;
+    }
     if (nextView === "master" && !canManageMaster) return;
     if (nextView === "create" && !canCreateReports) return;
+    if (nextView === "field_service" && !canUseFieldService) return;
     setView(nextView);
     setMenuOpen(false);
   }
@@ -338,7 +432,9 @@ export function DigitalServiceApp({
 
   return (
     <div
-      className={`real-app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      className={`real-app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${
+        view === "field_service" ? "field-service-active" : ""
+      }`}
     >
       <aside
         className={`real-sidebar ${menuOpen ? "open" : ""} ${
@@ -390,21 +486,17 @@ export function DigitalServiceApp({
               <div className="sidebar-nav-group" key={item.id}>
                 <button
                   aria-controls={
-                    item.id === "master"
-                      ? "sidebar-master-navigation"
-                      : undefined
+                    item.id === "master" ? "sidebar-master-navigation" : undefined
                   }
                   aria-expanded={
-                    item.id === "master"
-                      ? masterNavigationOpen
-                      : undefined
+                    item.id === "master" ? masterNavigationOpen : undefined
                   }
                   className={view === item.id ? "active" : ""}
                   onClick={() => navigateFromSidebar(item.id)}
                   title={sidebarCollapsed ? item.label : undefined}
                   type="button"
                 >
-                  <Icon size={19} />
+                  <Icon size={18} />
                   <span>{item.label}</span>
                   {item.id === "reports" && <i>{workspace.reports.length}</i>}
                   {item.id === "create" && <Plus size={14} />}
@@ -418,10 +510,7 @@ export function DigitalServiceApp({
                   )}
                 </button>
                 {item.id === "master" && masterNavigationOpen && (
-                  <div
-                    className="sidebar-master-links"
-                    id="sidebar-master-navigation"
-                  >
+                  <div className="sidebar-master-links" id="sidebar-master-navigation">
                     {masterTabs.map((master) => {
                       const MasterIcon = master.icon;
                       return (
@@ -449,13 +538,18 @@ export function DigitalServiceApp({
               </div>
             );
           })}
+
           <span className="nav-overline administration-overline">
             Administration
           </span>
           {administrationNavItems
             .filter(
               (item) =>
-                item.id !== "users" || currentUser.role === "Administrator",
+                item.id === "profile" ||
+                (item.id === "users" &&
+                  hasRolePermission(currentUser.role, "users:manage")) ||
+                (item.id === "settings" &&
+                  hasRolePermission(currentUser.role, "storage:view")),
             )
             .map((item) => {
               const Icon = item.icon;
@@ -467,7 +561,7 @@ export function DigitalServiceApp({
                     title={sidebarCollapsed ? item.label : undefined}
                     type="button"
                   >
-                    <Icon size={19} />
+                    <Icon size={18} />
                     <span>{item.label}</span>
                   </button>
                 </div>
@@ -506,8 +600,8 @@ export function DigitalServiceApp({
 
       {menuOpen && (
         <button
-          className="real-menu-scrim"
           aria-label="Close navigation"
+          className="real-menu-scrim"
           onClick={() => setMenuOpen(false)}
           type="button"
         />
@@ -517,15 +611,26 @@ export function DigitalServiceApp({
         <header className="real-topbar">
           <div>
             <button
-              className="real-menu-button"
               aria-label="Open navigation"
+              className="real-menu-button"
               onClick={() => setMenuOpen(true)}
               type="button"
             >
-              <Menu size={21} />
+              <Menu size={20} />
             </button>
+            <div className="mobile-topbar-brand" aria-label="Promach Digital Service Reports">
+              <span>
+                <Image
+                  alt=""
+                  height={28}
+                  src="/brand/promach-logo.png"
+                  width={28}
+                />
+              </span>
+              <strong>PROMACH</strong>
+            </div>
             <label className="real-search">
-              <Search size={18} />
+              <Search size={17} />
               <input
                 aria-label="Search reports"
                 onChange={(event) => setQuery(event.target.value)}
@@ -551,7 +656,11 @@ export function DigitalServiceApp({
           </div>
         </header>
 
-        <div className="real-page">
+        <div
+          className={`real-page ${
+            view === "field_service" ? "field-service-page" : ""
+          }`}
+        >
           <Breadcrumbs
             masterTab={masterTab}
             onNavigate={navigate}
@@ -565,6 +674,18 @@ export function DigitalServiceApp({
               onCreate={() => navigate("create")}
               onOpen={setSelectedReport}
               onViewReports={() => navigate("reports")}
+              onOpenFieldService={
+                canUseFieldService
+                  ? () => navigate("field_service")
+                  : undefined
+              }
+            />
+          )}
+          {view === "field_service" && (
+            <FieldServiceFlow
+              workspace={workspace}
+              onUpdateWorkspace={setWorkspace}
+              onExitToAdmin={() => setView("overview")}
             />
           )}
           {view === "reports" && (
@@ -604,11 +725,16 @@ export function DigitalServiceApp({
               }}
             />
           )}
-          {view === "users" && currentUser.role === "Administrator" && (
+          {view === "users" &&
+            hasRolePermission(currentUser.role, "users:manage") && (
             <UserManagementPage
               currentUser={currentUser}
               onNotice={toast}
             />
+          )}
+          {view === "settings" &&
+            hasRolePermission(currentUser.role, "storage:view") && (
+            <StorageSettingsPage />
           )}
         </div>
       </main>
@@ -624,7 +750,11 @@ export function DigitalServiceApp({
               type="button"
             >
               <Icon size={19} />
-              <span>{item.label.replace("Service ", "")}</span>
+              <span>
+                {item.id === "field_service"
+                  ? "Field mode"
+                  : item.label.replace("Service ", "")}
+              </span>
             </button>
           );
         })}
@@ -687,11 +817,13 @@ function Breadcrumbs({
 }) {
   const labels: Record<View, string> = {
     overview: "Overview",
+    field_service: "Field Service (PDMS)",
     reports: "Service reports",
     create: "Create report",
     master: "Master data",
     profile: "My profile",
     users: "Users and roles",
+    settings: "Storage utilised",
   };
   const masterLabel =
     masterTabs.find((item) => item.id === masterTab)?.label ?? "Records";
@@ -768,6 +900,7 @@ function Overview({
   onCreate,
   onOpen,
   onViewReports,
+  onOpenFieldService,
 }: {
   canCreate: boolean;
   workspace: WorkspaceSnapshot;
@@ -775,6 +908,7 @@ function Overview({
   onCreate: () => void;
   onOpen: (report: WorkspaceReport) => void;
   onViewReports: () => void;
+  onOpenFieldService?: () => void;
 }) {
   const completed = workspace.reports.filter(
     (report) => report.status === "Completed",
@@ -790,37 +924,52 @@ function Overview({
   return (
     <>
       <PageHeading
-        eyebrow="Admin workspace · live report workflow"
-        title="Service reporting, end to end"
-        description="Maintain reusable data, create each report once, share it securely with the client, and keep the signed result locked with its audit history."
-        action={canCreate ? (
-          <button className="real-primary-button" onClick={onCreate} type="button">
-            <Plus size={17} />
-            Create service report
-          </button>
-        ) : undefined}
+        eyebrow="Operations control centre"
+        title="Service operations, in control"
+        description="Manage planned work, capture field-service evidence, secure client approval, and retain a complete report history from one operational workspace."
+        action={
+          <div className="page-heading-actions">
+            {onOpenFieldService && (
+              <button
+                className="real-primary-button field-service-button"
+                onClick={onOpenFieldService}
+                type="button"
+              >
+                <QrCode size={17} />
+                Field Service (PDMS)
+              </button>
+            )}
+            {canCreate && (
+              <button className="real-secondary-button" onClick={onCreate} type="button">
+                <Plus size={17} />
+                New report
+              </button>
+            )}
+          </div>
+        }
       />
 
       <section className="real-metrics" aria-label="Workflow totals">
-        <Metric icon={FileText} label="All reports" value={String(workspace.reports.length).padStart(2, "0")} note={`${drafts} drafts`} tone="blue" />
-        <Metric icon={Signature} label="Awaiting signature" value={String(awaiting).padStart(2, "0")} note="Secure links active" tone="amber" />
-        <Metric icon={FileCheck2} label="Signed and locked" value={String(completed).padStart(2, "0")} note="Report ready" tone="green" />
-        <Metric icon={Building2} label="Active clients" value={String(activeClients).padStart(2, "0")} note={`${workspace.equipment.filter((item) => item.active).length} active equipment`} tone="violet" />
+        <Metric icon={FileText} label="Open service records" value={String(workspace.reports.length).padStart(2, "0")} note={`${drafts} ready to complete`} tone="blue" />
+        <Metric icon={Signature} label="Pending client action" value={String(awaiting).padStart(2, "0")} note="Signature links active" tone="amber" />
+        <Metric icon={FileCheck2} label="Completed reports" value={String(completed).padStart(2, "0")} note="Signed records secured" tone="green" />
+        <Metric icon={Building2} label="Service portfolio" value={String(activeClients).padStart(2, "0")} note={`${workspace.equipment.filter((item) => item.active).length} live equipment assets`} tone="violet" />
       </section>
 
-      <section className="workflow-banner">
-        <div>
-          <span>Digital report workflow</span>
-          <h2>One structured record from service entry to client signature.</h2>
+      <section className="workflow-banner field-workflow-banner">
+        <div className="workflow-banner-copy">
+          <span><ScanLine size={15} /> Field-to-report workflow</span>
+          <h2>Capture once in the field. Review, sign, and share with confidence.</h2>
+          <p>Master data drives the equipment, checklist, readings, service evidence, and final report trail.</p>
         </div>
         <div className="workflow-steps">
-          <span><i>1</i> Master data</span>
+          <span><i>1</i> Identify equipment</span>
           <ChevronRight size={16} />
-          <span><i>2</i> Draft report</span>
+          <span><i>2</i> Capture service</span>
           <ChevronRight size={16} />
-          <span><i>3</i> Share or sign here</span>
+          <span><i>3</i> Client approval</span>
           <ChevronRight size={16} />
-          <span><i>4</i> Locked report</span>
+          <span><i>4</i> Report archive</span>
         </div>
       </section>
 
@@ -829,8 +978,8 @@ function Overview({
           <div className="real-panel-heading">
             <div>
               <span>Current work</span>
-              <h2>Recent service reports</h2>
-              <p>Open a report to send, sign, review, or download.</p>
+              <h2>Service work queue</h2>
+              <p>Open a record to complete, review, send, or download the report.</p>
             </div>
             <button className="real-text-button" onClick={onViewReports} type="button">
               View all <ArrowRight size={15} />
@@ -851,7 +1000,7 @@ function Overview({
           <div className="real-panel-heading">
             <div>
               <span>Ready to use</span>
-              <h2>Master data coverage</h2>
+              <h2>Field-service readiness</h2>
             </div>
           </div>
           <div className="master-coverage">
@@ -865,7 +1014,7 @@ function Overview({
           {canCreate ? (
             <button className="create-callout" onClick={onCreate} type="button">
               <span><FilePlus2 size={21} /></span>
-              <div><strong>Create the next report</strong><small>Choose a client and the app loads its sites, equipment, and checklists.</small></div>
+              <div><strong>Start a service record</strong><small>Select a site, then capture only the equipment, checklist, readings, and evidence required for the visit.</small></div>
               <ArrowRight size={17} />
             </button>
           ) : (
@@ -1306,14 +1455,14 @@ function CreateReport({
       <PageHeading
         eyebrow="Guided report builder"
         title="Create service report"
-        description="The selected master data is copied into the report so the signed version always preserves the exact client, site, service type, equipment, checklist, and technicians used."
+        description="Create a field-ready service record from approved master data. The final report keeps the exact equipment, checklist, readings, photos, and technicians used for the visit."
       />
       <div className="create-layout">
         <aside className="create-steps">
           {[
-            ["1", "Client and visit", "Choose customer, site, and date"],
-            ["2", "Service details", "Equipment, checklist, and work"],
-            ["3", "Team and review", "Technicians and final confirmation"],
+            ["1", "Plan the visit", "Client, site, date, and service type"],
+            ["2", "Capture service", "Equipment, checklist, readings, and evidence"],
+            ["3", "Review and save", "Technicians, remarks, and final confirmation"],
           ].map(([number, title, copy], index) => (
             <button
               className={step === index + 1 ? "active" : step > index + 1 ? "done" : ""}
@@ -1336,7 +1485,7 @@ function CreateReport({
         <section className="real-panel create-form">
           {step === 1 && (
             <>
-              <FormSectionHeading number="01" title="Client and service visit" description="Select from reusable master data." />
+              <FormSectionHeading number="01" title="Plan the service visit" description="Select approved client and site records before field capture begins." />
               <div className="form-grid two">
                 <label>
                   Client
@@ -1394,7 +1543,7 @@ function CreateReport({
 
           {step === 2 && (
             <>
-              <FormSectionHeading number="02" title="Equipment and work completed" description="Equipment automatically carries its assigned checklist." />
+              <FormSectionHeading number="02" title="Capture equipment service" description="Selected equipment loads its assigned checklist and measurement fields. Add photos only when they support the report." />
               {!equipment.length ? (
                 <div className="inline-empty">
                   <Gauge size={24} />
@@ -1894,6 +2043,360 @@ function ProfilePage({
         </form>
       </section>
     </>
+  );
+}
+
+function StorageSettingsPage() {
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
+  const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState("");
+  const [clientFilter, setClientFilter] = useState("all");
+  const [versionFilter, setVersionFilter] = useState<
+    "all" | "current" | "previous"
+  >("all");
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    requestStorageUsage()
+      .then((payload) => {
+        if (!cancelled) setUsage(payload);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Unable to measure S3 storage.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function refreshUsage() {
+    setRefreshing(true);
+    setError("");
+    try {
+      setUsage(await requestStorageUsage());
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to measure S3 storage.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const filteredObjects = useMemo(() => {
+    if (!usage) return [];
+    const normalized = search.trim().toLowerCase();
+    return usage.objects.filter((object) => {
+      const matchesSearch =
+        !normalized ||
+        [object.key, object.client, object.category, object.reportId ?? ""]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalized);
+      const matchesClient =
+        clientFilter === "all" || object.client === clientFilter;
+      const matchesVersion =
+        versionFilter === "all" ||
+        (versionFilter === "current" && object.isLatest) ||
+        (versionFilter === "previous" && !object.isLatest);
+      return matchesSearch && matchesClient && matchesVersion;
+    });
+  }, [clientFilter, search, usage, versionFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredObjects.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleObjects = filteredObjects.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
+  return (
+    <section className="storage-settings space-y-5">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-400">
+            Administration settings
+          </span>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            Storage utilised
+          </h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">
+            Trace every S3 object byte by client, report, file category, and
+            version for monthly storage reporting.
+          </p>
+        </div>
+        <button
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-bold text-slate-100 transition hover:border-emerald-600 hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+          disabled={refreshing}
+          onClick={() => void refreshUsage()}
+          type="button"
+        >
+          {refreshing ? (
+            <PromachLoader inline label="" size="small" />
+          ) : (
+            <RefreshCw size={15} />
+          )}
+          {refreshing ? "Measuring…" : "Refresh measurement"}
+        </button>
+      </header>
+
+      {!usage && !error ? (
+        <div className="flex min-h-72 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900/70">
+          <PromachLoader label="Measuring storage utilised" size="large" />
+        </div>
+      ) : error && !usage ? (
+        <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-rose-900/80 bg-rose-950/30 px-6 text-center">
+          <AlertTriangle className="text-rose-400" size={26} />
+          <strong className="text-sm text-white">Storage could not be measured</strong>
+          <span className="max-w-xl text-xs leading-5 text-rose-200">{error}</span>
+          <button
+            className="rounded-lg bg-rose-900 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800"
+            onClick={() => void refreshUsage()}
+            type="button"
+          >
+            Retry
+          </button>
+        </div>
+      ) : usage ? (
+        <>
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-3 text-xs text-amber-200">
+              <AlertTriangle size={16} /> The latest refresh failed: {error}
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="rounded-2xl border border-emerald-900/80 bg-emerald-950/35 p-4">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                Billable object bytes
+              </span>
+              <strong className="mt-3 block text-2xl text-white">
+                {readableBytes(usage.totalBytes)}
+              </strong>
+              <small className="mt-1 block font-mono text-[11px] text-emerald-200">
+                {exactBytes(usage.totalBytes)} exact
+              </small>
+            </article>
+            <article className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Current files
+              </span>
+              <strong className="mt-3 block text-2xl text-white">
+                {usage.objectCount}
+              </strong>
+              <small className="mt-1 block font-mono text-[11px] text-slate-400">
+                {exactBytes(usage.currentBytes)}
+              </small>
+            </article>
+            <article className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Previous versions
+              </span>
+              <strong className="mt-3 block text-2xl text-white">
+                {Math.max(0, usage.versionCount - usage.objectCount)}
+              </strong>
+              <small className="mt-1 block font-mono text-[11px] text-slate-400">
+                {exactBytes(usage.noncurrentBytes)}
+              </small>
+            </article>
+            <article className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Storage location
+              </span>
+              <strong className="mt-3 block truncate text-sm text-white">
+                {usage.bucket}
+              </strong>
+              <small className="mt-1 block text-[11px] text-slate-400">
+                {usage.region} · {usage.clientUsage.length} billing groups
+              </small>
+            </article>
+          </div>
+
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">
+            <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-base font-bold text-white">Usage by client</h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  Exact object payload bytes, including retained previous versions.
+                </p>
+              </div>
+              <span className="text-[11px] text-slate-500">
+                Measured {singaporeDateTime(usage.measuredAt)} SGT
+              </span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {usage.clientUsage.map((client) => (
+                <article
+                  className="rounded-xl border border-slate-800 bg-slate-950/70 p-4"
+                  key={client.client}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <strong className="text-sm leading-5 text-white">
+                      {client.client}
+                    </strong>
+                    <span className="shrink-0 rounded-full bg-emerald-950 px-2 py-1 text-[10px] font-bold text-emerald-400">
+                      {client.currentObjects} files
+                    </span>
+                  </div>
+                  <strong className="mt-4 block text-xl text-emerald-300">
+                    {readableBytes(client.totalBytes)}
+                  </strong>
+                  <span className="mt-1 block font-mono text-[11px] text-slate-300">
+                    {exactBytes(client.totalBytes)} exact
+                  </span>
+                  <span className="mt-3 block text-[11px] text-slate-500">
+                    {client.versions} stored versions · current payload {exactBytes(client.currentBytes)}
+                  </span>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <h2 className="text-base font-bold text-white">Byte-level file register</h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  Each row represents one stored S3 version and its exact byte size.
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <input
+                  aria-label="Search storage register"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white outline-none placeholder:text-slate-600 focus:border-emerald-600"
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="Search file, client, report…"
+                  value={search}
+                />
+                <select
+                  aria-label="Filter storage by client"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-emerald-600"
+                  onChange={(event) => {
+                    setClientFilter(event.target.value);
+                    setPage(1);
+                  }}
+                  value={clientFilter}
+                >
+                  <option value="all">All clients</option>
+                  {usage.clientUsage.map((client) => (
+                    <option key={client.client} value={client.client}>
+                      {client.client}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter storage by version status"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-emerald-600"
+                  onChange={(event) => {
+                    setVersionFilter(
+                      event.target.value as "all" | "current" | "previous",
+                    );
+                    setPage(1);
+                  }}
+                  value={versionFilter}
+                >
+                  <option value="all">All versions</option>
+                  <option value="current">Current files</option>
+                  <option value="previous">Previous versions</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800">
+              <table className="min-w-[1050px] w-full border-collapse text-left text-xs">
+                <thead className="bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">File / object key</th>
+                    <th className="px-4 py-3">Client</th>
+                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3">Version</th>
+                    <th className="px-4 py-3 text-right">Exact size</th>
+                    <th className="px-4 py-3">Last modified (SGT)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 bg-slate-900/50">
+                  {visibleObjects.map((object) => (
+                    <tr className="align-top hover:bg-slate-800/60" key={`${object.key}-${object.versionId}`}>
+                      <td className="max-w-sm px-4 py-3">
+                        <strong className="block break-all font-mono text-[11px] font-medium text-slate-200">
+                          {object.key}
+                        </strong>
+                        <span className="mt-1 block text-[10px] text-slate-600">
+                          {object.reportId ? `Report ${object.reportId}` : object.storageClass}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{object.client}</td>
+                      <td className="px-4 py-3 text-slate-300">{object.category}</td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                          object.isLatest
+                            ? "bg-emerald-950 text-emerald-400"
+                            : "bg-amber-950 text-amber-400"
+                        }`}>
+                          {object.isLatest ? "Current" : "Previous"}
+                        </span>
+                        <span className="mt-2 block max-w-36 truncate font-mono text-[9px] text-slate-600" title={object.versionId}>
+                          {object.versionId}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <strong className="whitespace-nowrap font-mono text-slate-100">
+                          {exactBytes(object.sizeBytes)}
+                        </strong>
+                        <span className="mt-1 block text-[10px] text-slate-500">
+                          {readableBytes(object.sizeBytes)}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-400">
+                        {singaporeDateTime(object.lastModified)}
+                      </td>
+                    </tr>
+                  ))}
+                  {visibleObjects.length === 0 && (
+                    <tr>
+                      <td className="px-4 py-10 text-center text-slate-500" colSpan={6}>
+                        No stored files match the selected filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              currentPage={currentPage}
+              itemLabel="stored versions"
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+              pageSize={pageSize}
+              pageSizeOptions={[10, 25, 50]}
+              totalItems={filteredObjects.length}
+            />
+            <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-[11px] leading-5 text-slate-500">
+              Storage utilised is calculated from S3 object payload sizes,
+              including retained previous versions. AWS invoices can additionally
+              include requests, data transfer, taxes, and other service charges.
+            </p>
+          </section>
+        </>
+      ) : null}
+    </section>
   );
 }
 

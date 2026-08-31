@@ -175,7 +175,13 @@ export function ClientSigningApp({ token }: { token: string }) {
               className="real-primary-button"
               disabled={!company}
               onClick={() => {
-                if (company) void downloadServiceReportPdf(report, company);
+                if (company) {
+                  void downloadServiceReportPdf(
+                    report,
+                    company,
+                    `/api/client/reports/${encodeURIComponent(token)}/pdf`,
+                  );
+                }
               }}
               type="button"
             >
