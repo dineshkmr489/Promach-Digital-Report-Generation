@@ -1,10 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ensureDatabase, readWorkspace } from "../server/database.ts";
-import {
-  closePostgresConnection,
-  pingPostgresDatabase,
-} from "../server/postgres.ts";
 
 async function loadLocalEnvironment(): Promise<void> {
   try {
@@ -28,23 +24,18 @@ async function loadLocalEnvironment(): Promise<void> {
 
 await loadLocalEnvironment();
 
-try {
-  await pingPostgresDatabase();
-  await ensureDatabase();
-  const workspace = await readWorkspace();
-  process.stdout.write(
-    [
-      `PostgreSQL database: ${process.env.DATABASE_NAME || "report_gen"}`,
-      `Host: ${process.env.DATABASE_HOST || "localhost"}`,
-      `Clients: ${workspace.clients.length}`,
-      `Sites: ${workspace.locations.length}`,
-      `Equipment: ${workspace.equipment.length}`,
-      `Checklists: ${workspace.checklistTemplates.length}`,
-      `Technicians: ${workspace.technicians.length}`,
-      `Service types: ${workspace.serviceTypes.length}`,
-      `Service reports: ${workspace.reports.length}`,
-    ].join("\n") + "\n",
-  );
-} finally {
-  await closePostgresConnection();
-}
+await ensureDatabase();
+const workspace = await readWorkspace();
+process.stdout.write(
+  [
+    `Database Engine: AWS DynamoDB (Always-Free Tier)`,
+    `Region: ${process.env.AWS_REGION || "ap-southeast-1"}`,
+    `Clients: ${workspace.clients.length}`,
+    `Sites: ${workspace.locations.length}`,
+    `Equipment: ${workspace.equipment.length}`,
+    `Checklists: ${workspace.checklistTemplates.length}`,
+    `Technicians: ${workspace.technicians.length}`,
+    `Service types: ${workspace.serviceTypes.length}`,
+    `Service reports: ${workspace.reports.length}`,
+  ].join("\n") + "\n",
+);

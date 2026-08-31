@@ -5,7 +5,7 @@ maintaining master data, creating equipment service reports, securely sharing a
 single report with a client, collecting a digital signature, and downloading
 the completed signed PDF.
 
-All operational data is persisted in Amazon RDS PostgreSQL:
+All operational data is persisted in AWS DynamoDB (25 GB Always-Free Tier):
 
 - company profile
 - clients and sites
@@ -25,19 +25,14 @@ Sites deployment configuration.
 Requirements:
 
 - Node.js 22.13 or newer
-- access to Amazon RDS PostgreSQL
+- AWS credentials or EC2 IAM role with DynamoDB and S3 permissions
 
 Copy `.env.example` to `.env.local` and configure:
 
 ```dotenv
-DATABASE_HOST=promach-report-gen-postgres.c3wg4uace6mu.ap-southeast-1.rds.amazonaws.com
-DATABASE_PORT=5432
-DATABASE_NAME=report_gen
-DATABASE_USER=promach_admin
-DATABASE_PASSWORD=replace-with-database-password
-# Or AWS Secrets Manager:
-# RDS_SECRET_ARN=arn:aws:secretsmanager:ap-southeast-1:ACCOUNT_ID:secret:SECRET_NAME
 APP_URL=http://localhost:3000
+AWS_REGION=ap-southeast-1
+S3_BUCKET=digi-repo-gen
 ADMIN_USERNAME=promach-admin
 ADMIN_PASSWORD=use-a-long-random-password
 AUTH_SECRET=use-at-least-32-random-characters
@@ -59,7 +54,7 @@ records only when they do not already exist, so it does not overwrite later
 master-data or report changes.
 
 The `ADMIN_*` values create the first database-backed Administrator account
-when the users collection is empty. Further accounts are managed inside the
+when the DynamoDB users table is empty. Further accounts are managed inside the
 application:
 
 - **Administrator** — complete access, including users and roles
@@ -103,9 +98,9 @@ Example systemd and nginx files are provided in:
 - `deploy/promach-dsr.service.example`
 - `deploy/nginx-promach.conf.example`
 
-Before exposing the server, replace the example administrator password, allow
-the EC2 egress IP in the RDS Security Group, terminate HTTPS at nginx or an AWS load
-balancer, and restrict inbound security-group ports to SSH plus HTTP/HTTPS.
+Before exposing the server, replace the example administrator password,
+terminate HTTPS at nginx or an AWS load balancer, and restrict inbound security-group
+ports to SSH plus HTTP/HTTPS.
 
 ## Report signing
 

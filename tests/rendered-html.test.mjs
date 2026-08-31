@@ -1,9 +1,33 @@
 import assert from "node:assert/strict";
+import { DeleteTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import net from "node:net";
 import { resolve } from "node:path";
 import test from "node:test";
+
+async function testEnvironment() {
+  const environment = { ...process.env };
+  try {
+    const contents = await readFile(resolve(".env.local"), "utf8");
+    for (const line of contents.split(/\r?\n/)) {
+      const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
+      if (!match || environment[match[1]] !== undefined) continue;
+      let value = match[2].trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      environment[match[1]] = value;
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return environment;
+}
 
 async function availablePort() {
   const listener = net.createServer();
@@ -32,21 +56,36 @@ async function waitForApplication(url, server, serverOutput) {
   throw new Error(`Next.js did not become ready.\n${serverOutput.join("")}`);
 }
 
-test("server renders the PostgreSQL-backed Promach workspace", async (context) => {
+test("server renders the DynamoDB-backed Promach workspace", async (context) => {
   const port = await availablePort();
   const output = [];
+  const environment = await testEnvironment();
+  const tablePrefix = `promach_dsr_rbac_test_${Date.now()}_`;
   const testUsername = "test-admin";
   const testPassword = "test-password-not-for-production";
+  const tableSuffixes = [
+    "company_profiles",
+    "clients",
+    "locations",
+    "equipment",
+    "checklist_templates",
+    "technicians",
+    "service_types",
+    "service_reports",
+    "users",
+    "system_state",
+  ];
   const server = spawn(
     process.execPath,
     [resolve("scripts/start.mjs")],
     {
       cwd: resolve("."),
       env: {
-        ...process.env,
+        ...environment,
         ADMIN_USERNAME: testUsername,
         ADMIN_PASSWORD: testPassword,
         ADMIN_EMAIL: "test-admin@promach.local",
+        DYNAMODB_TABLE_PREFIX: tablePrefix,
         HOSTNAME: "127.0.0.1",
         PORT: String(port),
       },
@@ -55,7 +94,25 @@ test("server renders the PostgreSQL-backed Promach workspace", async (context) =
   );
   server.stdout.on("data", (chunk) => output.push(chunk.toString()));
   server.stderr.on("data", (chunk) => output.push(chunk.toString()));
-  context.after(() => server.kill());
+  context.after(async () => {
+    server.kill();
+    const accessKeyId = environment.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = environment.AWS_SECRET_ACCESS_KEY;
+    const client = new DynamoDBClient({
+      region: environment.AWS_REGION || "ap-southeast-1",
+      ...(accessKeyId && secretAccessKey
+        ? { credentials: { accessKeyId, secretAccessKey } }
+        : {}),
+    });
+    await Promise.allSettled(
+      tableSuffixes.map((suffix) =>
+        client.send(
+          new DeleteTableCommand({ TableName: `${tablePrefix}${suffix}` }),
+        ),
+      ),
+    );
+    client.destroy();
+  });
 
   const baseUrl = `http://127.0.0.1:${port}`;
   const loginPage = await waitForApplication(

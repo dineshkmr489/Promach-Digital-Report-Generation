@@ -1,3 +1,16 @@
+import {
+  CreateTableCommand,
+  DescribeTableCommand,
+  ResourceNotFoundException,
+} from "@aws-sdk/client-dynamodb";
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  ScanCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { createInitialWorkspace } from "../app/workspaceSeed.ts";
 import type {
   ChecklistTemplateRecord,
@@ -13,7 +26,11 @@ import type {
 } from "../app/workspaceTypes.ts";
 import type { CompanyProfile } from "../app/reportData.ts";
 import { hashPassword, verifyPassword } from "./adminAuth.ts";
-import { query } from "./postgres.ts";
+import {
+  dynamoClient,
+  dynamoDocClient,
+  tableNames,
+} from "./dynamodb.ts";
 
 export type MasterRecord =
   | ClientRecord
@@ -23,238 +40,329 @@ export type MasterRecord =
   | TechnicianRecord
   | ServiceTypeRecord;
 
-type StoredUserRow = {
+type StoredUser = Omit<UserRecord, "id"> & {
   id: string;
-  username: string;
-  email: string;
-  password_hash: string;
-  name: string;
-  phone: string | null;
-  designation: string | null;
-  role: string;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
+  passwordHash: string;
 };
 
-const tableNames: Record<MasterEntity, string> = {
-  clients: "clients",
-  locations: "locations",
-  equipment: "equipment",
-  "checklist-templates": "checklist_templates",
-  technicians: "technicians",
-  "service-types": "service_types",
+type StoredReport = WorkspaceReport & {
+  shareTokenHash?: string | null;
 };
 
-function userFromRow(row: StoredUserRow): UserRecord {
+
+function userFromStored(stored: StoredUser): UserRecord {
   return {
-    id: row.id,
-    username: row.username,
-    name: row.name,
-    email: row.email,
-    phone: row.phone || "",
-    designation: row.designation || "",
-    role: row.role as UserRecord["role"],
-    active: row.active,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id: stored.id,
+    username: stored.username,
+    name: stored.name,
+    email: stored.email,
+    phone: stored.phone || "",
+    designation: stored.designation || "",
+    role: stored.role,
+    active: stored.active,
+    createdAt: stored.createdAt,
+    updatedAt: stored.updatedAt,
   };
 }
 
+function cleanReport(record: StoredReport): WorkspaceReport {
+  const report = { ...record };
+  delete report.shareTokenHash;
+  return report;
+}
+
+async function waitForTable(tableName: string): Promise<void> {
+  const ddb = dynamoClient();
+  for (let i = 0; i < 30; i++) {
+    try {
+      const res = await ddb.send(
+        new DescribeTableCommand({ TableName: tableName }),
+      );
+      if (res.Table?.TableStatus === "ACTIVE") return;
+    } catch {
+      // Waiting
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+async function ensureTable(params: {
+  TableName: string;
+  KeySchema: { AttributeName: string; KeyType: "HASH" | "RANGE" }[];
+  AttributeDefinitions: { AttributeName: string; AttributeType: "S" | "N" }[];
+  GlobalSecondaryIndexes?: {
+    IndexName: string;
+    KeySchema: { AttributeName: string; KeyType: "HASH" | "RANGE" }[];
+    Projection: { ProjectionType: "ALL" };
+  }[];
+  BillingMode: "PAY_PER_REQUEST";
+}): Promise<void> {
+  const ddb = dynamoClient();
+  try {
+    const res = await ddb.send(
+      new DescribeTableCommand({ TableName: params.TableName }),
+    );
+    if (res.Table?.TableStatus === "CREATING") {
+      await waitForTable(params.TableName);
+    }
+  } catch (error) {
+    if (
+      error instanceof ResourceNotFoundException ||
+      (error as { name?: string }).name === "ResourceNotFoundException"
+    ) {
+      await ddb.send(new CreateTableCommand(params));
+      await waitForTable(params.TableName);
+    } else {
+      throw error;
+    }
+  }
+}
+
 export async function ensureDatabase(): Promise<void> {
-  await query(`
-    CREATE TABLE IF NOT EXISTS company_profiles (
-      id TEXT PRIMARY KEY,
-      data JSONB NOT NULL
-    );
+  await Promise.all([
+    ensureTable({
+      TableName: tableNames.company,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.clients,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.locations,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [
+        { AttributeName: "id", AttributeType: "S" },
+        { AttributeName: "clientId", AttributeType: "S" },
+      ],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: "clientId-index",
+          KeySchema: [{ AttributeName: "clientId", KeyType: "HASH" }],
+          Projection: { ProjectionType: "ALL" },
+        },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.equipment,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [
+        { AttributeName: "id", AttributeType: "S" },
+        { AttributeName: "clientId", AttributeType: "S" },
+      ],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: "clientId-index",
+          KeySchema: [{ AttributeName: "clientId", KeyType: "HASH" }],
+          Projection: { ProjectionType: "ALL" },
+        },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames["checklist-templates"],
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.technicians,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames["service-types"],
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.reports,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [
+        { AttributeName: "id", AttributeType: "S" },
+        { AttributeName: "shareTokenHash", AttributeType: "S" },
+      ],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: "shareTokenHash-index",
+          KeySchema: [{ AttributeName: "shareTokenHash", KeyType: "HASH" }],
+          Projection: { ProjectionType: "ALL" },
+        },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.users,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [
+        { AttributeName: "id", AttributeType: "S" },
+        { AttributeName: "username", AttributeType: "S" },
+        { AttributeName: "email", AttributeType: "S" },
+      ],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: "username-index",
+          KeySchema: [{ AttributeName: "username", KeyType: "HASH" }],
+          Projection: { ProjectionType: "ALL" },
+        },
+        {
+          IndexName: "email-index",
+          KeySchema: [{ AttributeName: "email", KeyType: "HASH" }],
+          Projection: { ProjectionType: "ALL" },
+        },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+    ensureTable({
+      TableName: tableNames.state,
+      KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+  ]);
 
-    CREATE TABLE IF NOT EXISTS clients (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      data JSONB NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS locations (
-      id TEXT PRIMARY KEY,
-      client_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      data JSONB NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_locations_client ON locations(client_id);
-
-    CREATE TABLE IF NOT EXISTS equipment (
-      id TEXT PRIMARY KEY,
-      client_id TEXT NOT NULL,
-      location_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      data JSONB NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_equipment_client_location ON equipment(client_id, location_id);
-
-    CREATE TABLE IF NOT EXISTS checklist_templates (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      data JSONB NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS technicians (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      data JSONB NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS service_types (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      active BOOLEAN NOT NULL DEFAULT true,
-      data JSONB NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_service_types_name_unique ON service_types(LOWER(name));
-
-    CREATE TABLE IF NOT EXISTS service_reports (
-      id TEXT PRIMARY KEY,
-      status TEXT NOT NULL,
-      share_token_hash TEXT,
-      data JSONB NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_service_reports_share_token ON service_reports(share_token_hash) WHERE share_token_hash IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_service_reports_status ON service_reports(status);
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL,
-      email TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT NOT NULL,
-      phone TEXT,
-      designation TEXT,
-      role TEXT NOT NULL,
-      active BOOLEAN NOT NULL DEFAULT true,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(LOWER(username));
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(LOWER(email));
-
-    CREATE TABLE IF NOT EXISTS system_state (
-      id TEXT PRIMARY KEY,
-      value BIGINT,
-      schema_version INT,
-      initialized_at TEXT
-    );
-  `);
-
-  const initCheck = await query<{ id: string }>(
-    "SELECT id FROM system_state WHERE id = 'workspace-seed-v1';",
+  const docClient = dynamoDocClient();
+  const initCheck = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.state,
+      Key: { id: "workspace-seed-v1" },
+    }),
   );
 
-  if (initCheck.rowCount === 0) {
+  if (!initCheck.Item) {
     const seed = createInitialWorkspace();
 
-    await query(
-      `INSERT INTO company_profiles (id, data) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING;`,
-      ["promach", JSON.stringify({ id: "promach", ...seed.company })],
+    await docClient.send(
+      new PutCommand({
+        TableName: tableNames.company,
+        Item: { id: "promach", ...seed.company },
+      }),
     );
 
-    for (const client of seed.clients) {
-      await query(
-        `INSERT INTO clients (id, name, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
-        [client.id, client.name, JSON.stringify(client)],
+    for (const item of seed.clients) {
+      await docClient.send(
+        new PutCommand({ TableName: tableNames.clients, Item: item }),
       );
     }
-    for (const location of seed.locations) {
-      await query(
-        `INSERT INTO locations (id, client_id, name, data) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING;`,
-        [location.id, location.clientId, location.name, JSON.stringify(location)],
+    for (const item of seed.locations) {
+      await docClient.send(
+        new PutCommand({ TableName: tableNames.locations, Item: item }),
       );
     }
-    for (const eq of seed.equipment) {
-      await query(
-        `INSERT INTO equipment (id, client_id, location_id, name, data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING;`,
-        [eq.id, eq.clientId, eq.locationId, eq.name, JSON.stringify(eq)],
+    for (const item of seed.equipment) {
+      await docClient.send(
+        new PutCommand({ TableName: tableNames.equipment, Item: item }),
       );
     }
-    for (const template of seed.checklistTemplates) {
-      await query(
-        `INSERT INTO checklist_templates (id, name, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
-        [template.id, template.name, JSON.stringify(template)],
+    for (const item of seed.checklistTemplates) {
+      await docClient.send(
+        new PutCommand({
+          TableName: tableNames["checklist-templates"],
+          Item: item,
+        }),
       );
     }
-    for (const tech of seed.technicians) {
-      await query(
-        `INSERT INTO technicians (id, name, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
-        [tech.id, tech.name, JSON.stringify(tech)],
+    for (const item of seed.technicians) {
+      await docClient.send(
+        new PutCommand({ TableName: tableNames.technicians, Item: item }),
       );
     }
-    for (const st of seed.serviceTypes) {
-      await query(
-        `INSERT INTO service_types (id, name, description, active, data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING;`,
-        [st.id, st.name, st.description, st.active, JSON.stringify(st)],
+    for (const item of seed.serviceTypes) {
+      await docClient.send(
+        new PutCommand({ TableName: tableNames["service-types"], Item: item }),
       );
     }
-    for (const rep of seed.reports) {
-      await query(
-        `INSERT INTO service_reports (id, status, share_token_hash, data) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING;`,
-        [rep.id, rep.status, null, JSON.stringify(rep)],
+    for (const item of seed.reports) {
+      await docClient.send(
+        new PutCommand({ TableName: tableNames.reports, Item: item }),
       );
     }
 
-    await query(
-      `INSERT INTO system_state (id, schema_version, initialized_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING;`,
-      ["workspace-seed-v1", 1, new Date().toISOString()],
+    await docClient.send(
+      new PutCommand({
+        TableName: tableNames.state,
+        Item: {
+          id: "workspace-seed-v1",
+          schemaVersion: 1,
+          initializedAt: new Date().toISOString(),
+        },
+      }),
     );
   }
 
   const username = process.env.ADMIN_USERNAME?.trim() || "promach-admin";
   const password = process.env.ADMIN_PASSWORD;
   if (password) {
-    const existingUser = await query<{ id: string }>(
-      "SELECT id FROM users WHERE LOWER(username) = LOWER($1);",
-      [username],
+    const usersScan = await docClient.send(
+      new ScanCommand({
+        TableName: tableNames.users,
+        FilterExpression: "#u = :u",
+        ExpressionAttributeNames: { "#u": "username" },
+        ExpressionAttributeValues: { ":u": username },
+      }),
     );
-    if (existingUser.rowCount === 0) {
+    if (!usersScan.Items || usersScan.Items.length === 0) {
       const now = new Date().toISOString();
-      await query(
-        `INSERT INTO users (id, username, email, password_hash, name, phone, designation, role, active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         ON CONFLICT (id) DO NOTHING;`,
-        [
-          `bootstrap-${username}`,
-          username,
-          process.env.ADMIN_EMAIL?.trim() || `${username}@promach.local`,
-          hashPassword(password),
-          process.env.ADMIN_NAME?.trim() || "Promach Admin",
-          "",
-          "System Administrator",
-          "Administrator",
-          true,
-          now,
-          now,
-        ],
+      await docClient.send(
+        new PutCommand({
+          TableName: tableNames.users,
+          Item: {
+            id: `bootstrap-${username}`,
+            username,
+            email: process.env.ADMIN_EMAIL?.trim() || `${username}@promach.local`,
+            passwordHash: hashPassword(password),
+            name: process.env.ADMIN_NAME?.trim() || "Promach Admin",
+            phone: "",
+            designation: "System Administrator",
+            role: "Administrator",
+            active: true,
+            createdAt: now,
+            updatedAt: now,
+          } satisfies StoredUser,
+        }),
       );
     }
   }
 
-  const reportIdsRes = await query<{ id: string }>(
-    "SELECT id FROM service_reports;",
+  const reportsScan = await docClient.send(
+    new ScanCommand({
+      TableName: tableNames.reports,
+      ProjectionExpression: "id",
+    }),
   );
-  const highestReportNumber = reportIdsRes.rows.reduce(
+  const highestReportNumber = (reportsScan.Items || []).reduce(
     (maximum, row) =>
       Math.max(maximum, Number.parseInt(String(row.id), 10) || 0),
     4122,
   );
 
-  await query(
-    `INSERT INTO system_state (id, value)
-     VALUES ('report-number', $1)
-     ON CONFLICT (id) DO UPDATE SET value = GREATEST(system_state.value, EXCLUDED.value);`,
-    [highestReportNumber],
+  const counterItem = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.state,
+      Key: { id: "report-number" },
+    }),
   );
+  if (!counterItem.Item || (counterItem.Item.value || 0) < highestReportNumber) {
+    await docClient.send(
+      new PutCommand({
+        TableName: tableNames.state,
+        Item: { id: "report-number", value: highestReportNumber },
+      }),
+    );
+  }
 }
 
 export async function readWorkspace(): Promise<WorkspaceSnapshot> {
   await ensureDatabase();
+  const docClient = dynamoDocClient();
+
   const [
     companyRes,
     clientsRes,
@@ -265,35 +373,28 @@ export async function readWorkspace(): Promise<WorkspaceSnapshot> {
     typesRes,
     reportsRes,
   ] = await Promise.all([
-    query<{ data: CompanyProfile }>(
-      "SELECT data FROM company_profiles WHERE id = 'promach';",
+    docClient.send(
+      new GetCommand({
+        TableName: tableNames.company,
+        Key: { id: "promach" },
+      }),
     ),
-    query<{ data: ClientRecord }>("SELECT data FROM clients ORDER BY name ASC;"),
-    query<{ data: LocationRecord }>(
-      "SELECT data FROM locations ORDER BY name ASC;",
+    docClient.send(new ScanCommand({ TableName: tableNames.clients })),
+    docClient.send(new ScanCommand({ TableName: tableNames.locations })),
+    docClient.send(new ScanCommand({ TableName: tableNames.equipment })),
+    docClient.send(
+      new ScanCommand({ TableName: tableNames["checklist-templates"] }),
     ),
-    query<{ data: EquipmentRecord }>(
-      "SELECT data FROM equipment ORDER BY name ASC;",
-    ),
-    query<{ data: ChecklistTemplateRecord }>(
-      "SELECT data FROM checklist_templates ORDER BY name ASC;",
-    ),
-    query<{ data: TechnicianRecord }>(
-      "SELECT data FROM technicians ORDER BY name ASC;",
-    ),
-    query<{ data: ServiceTypeRecord }>(
-      "SELECT data FROM service_types ORDER BY name ASC;",
-    ),
-    query<{ data: WorkspaceReport }>(
-      "SELECT data FROM service_reports ORDER BY (CASE WHEN id ~ '^[0-9]+$' THEN id::bigint ELSE 0 END) DESC;",
-    ),
+    docClient.send(new ScanCommand({ TableName: tableNames.technicians })),
+    docClient.send(new ScanCommand({ TableName: tableNames["service-types"] })),
+    docClient.send(new ScanCommand({ TableName: tableNames.reports })),
   ]);
 
-  if (!companyRes.rows[0]?.data) {
+  if (!companyRes.Item) {
     throw new Error("Company profile is not initialized.");
   }
 
-  const companyDoc = companyRes.rows[0].data;
+  const companyDoc = companyRes.Item;
   const company: CompanyProfile = {
     name: companyDoc.name,
     address: companyDoc.address,
@@ -303,19 +404,22 @@ export async function readWorkspace(): Promise<WorkspaceSnapshot> {
     registration: companyDoc.registration,
   };
 
+  const byName = <T extends { name: string }>(left: T, right: T) =>
+    left.name.localeCompare(right.name);
+
   return {
     company,
-    clients: clientsRes.rows.map((r) => r.data),
-    locations: locationsRes.rows.map((r) => r.data),
-    equipment: equipmentRes.rows.map((r) => r.data),
-    checklistTemplates: templatesRes.rows.map((r) => r.data),
-    technicians: techsRes.rows.map((r) => r.data),
-    serviceTypes: typesRes.rows.map((r) => r.data),
-    reports: reportsRes.rows.map((r) => {
-      const rep = { ...r.data };
-      delete (rep as { shareTokenHash?: string | null }).shareTokenHash;
-      return rep;
-    }),
+    clients: ((clientsRes.Items || []) as ClientRecord[]).sort(byName),
+    locations: ((locationsRes.Items || []) as LocationRecord[]).sort(byName),
+    equipment: ((equipmentRes.Items || []) as EquipmentRecord[]).sort(byName),
+    checklistTemplates: (
+      (templatesRes.Items || []) as ChecklistTemplateRecord[]
+    ).sort(byName),
+    technicians: ((techsRes.Items || []) as TechnicianRecord[]).sort(byName),
+    serviceTypes: ((typesRes.Items || []) as ServiceTypeRecord[]).sort(byName),
+    reports: ((reportsRes.Items || []) as StoredReport[])
+      .map(cleanReport)
+      .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0)),
   };
 }
 
@@ -323,47 +427,27 @@ export async function findMasterRecord(
   entity: MasterEntity,
   id: string,
 ): Promise<MasterRecord | null> {
-  const table = tableNames[entity];
-  const res = await query<{ data: MasterRecord }>(
-    `SELECT data FROM ${table} WHERE id = $1;`,
-    [id],
+  const docClient = dynamoDocClient();
+  const res = await docClient.send(
+    new GetCommand({
+      TableName: tableNames[entity],
+      Key: { id },
+    }),
   );
-  return res.rows[0]?.data || null;
+  return (res.Item as MasterRecord) || null;
 }
 
 export async function insertMasterRecord(
   entity: MasterEntity,
   record: MasterRecord,
 ): Promise<void> {
-  const table = tableNames[entity];
-  const id = record.id;
-  const name = record.name;
-  const data = JSON.stringify(record);
-
-  if (entity === "locations") {
-    const loc = record as LocationRecord;
-    await query(
-      `INSERT INTO locations (id, client_id, name, data) VALUES ($1, $2, $3, $4);`,
-      [id, loc.clientId, name, data],
-    );
-  } else if (entity === "equipment") {
-    const eq = record as EquipmentRecord;
-    await query(
-      `INSERT INTO equipment (id, client_id, location_id, name, data) VALUES ($1, $2, $3, $4, $5);`,
-      [id, eq.clientId, eq.locationId, name, data],
-    );
-  } else if (entity === "service-types") {
-    const st = record as ServiceTypeRecord;
-    await query(
-      `INSERT INTO service_types (id, name, description, active, data) VALUES ($1, $2, $3, $4, $5);`,
-      [id, name, st.description, st.active, data],
-    );
-  } else {
-    await query(
-      `INSERT INTO ${table} (id, name, data) VALUES ($1, $2, $3);`,
-      [id, name, data],
-    );
-  }
+  const docClient = dynamoDocClient();
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames[entity],
+      Item: record,
+    }),
+  );
 }
 
 export async function replaceMasterRecord(
@@ -371,90 +455,89 @@ export async function replaceMasterRecord(
   id: string,
   record: MasterRecord,
 ): Promise<boolean> {
-  const table = tableNames[entity];
-  const name = record.name;
-  const data = JSON.stringify(record);
-
-  let res;
-  if (entity === "locations") {
-    const loc = record as LocationRecord;
-    res = await query(
-      `UPDATE locations SET client_id = $2, name = $3, data = $4 WHERE id = $1;`,
-      [id, loc.clientId, name, data],
-    );
-  } else if (entity === "equipment") {
-    const eq = record as EquipmentRecord;
-    res = await query(
-      `UPDATE equipment SET client_id = $2, location_id = $3, name = $4, data = $5 WHERE id = $1;`,
-      [id, eq.clientId, eq.locationId, name, data],
-    );
-  } else if (entity === "service-types") {
-    const st = record as ServiceTypeRecord;
-    res = await query(
-      `UPDATE service_types SET name = $2, description = $3, active = $4, data = $5 WHERE id = $1;`,
-      [id, name, st.description, st.active, data],
-    );
-  } else {
-    res = await query(
-      `UPDATE ${table} SET name = $2, data = $3 WHERE id = $1;`,
-      [id, name, data],
-    );
-  }
-
-  return (res.rowCount ?? 0) === 1;
+  const docClient = dynamoDocClient();
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames[entity],
+      Item: { ...record, id },
+    }),
+  );
+  return true;
 }
 
 export async function removeMasterRecord(
   entity: MasterEntity,
   id: string,
 ): Promise<boolean> {
-  const table = tableNames[entity];
-  const res = await query(`DELETE FROM ${table} WHERE id = $1;`, [id]);
-  return (res.rowCount ?? 0) === 1;
+  const docClient = dynamoDocClient();
+  await docClient.send(
+    new DeleteCommand({
+      TableName: tableNames[entity],
+      Key: { id },
+    }),
+  );
+  return true;
 }
 
 export async function serviceTypeNameExists(
   name: string,
   excludedId?: string,
 ): Promise<boolean> {
-  const res = await query<{ id: string }>(
-    `SELECT id FROM service_types WHERE LOWER(name) = LOWER($1) AND ($2::text IS NULL OR id != $2);`,
-    [name.trim(), excludedId || null],
+  const docClient = dynamoDocClient();
+  const res = await docClient.send(
+    new ScanCommand({
+      TableName: tableNames["service-types"],
+    }),
   );
-  return res.rowCount !== null && res.rowCount > 0;
+  const lowerName = name.trim().toLowerCase();
+  return (res.Items || []).some(
+    (item) =>
+      item.id !== excludedId &&
+      String(item.name || "").trim().toLowerCase() === lowerName,
+  );
 }
 
 export async function nextReportNumber(): Promise<string> {
-  const res = await query<{ value: string }>(
-    `INSERT INTO system_state (id, value)
-     VALUES ('report-number', 4123)
-     ON CONFLICT (id) DO UPDATE SET value = system_state.value + 1
-     RETURNING value;`,
+  const docClient = dynamoDocClient();
+  const res = await docClient.send(
+    new UpdateCommand({
+      TableName: tableNames.state,
+      Key: { id: "report-number" },
+      UpdateExpression: "ADD #val :inc",
+      ExpressionAttributeNames: { "#val": "value" },
+      ExpressionAttributeValues: { ":inc": 1 },
+      ReturnValues: "ALL_NEW",
+    }),
   );
-  if (!res.rows[0]?.value) {
+  const val = res.Attributes?.value;
+  if (val === undefined || val === null) {
     throw new Error("Unable to allocate a service report number.");
   }
-  return String(res.rows[0].value);
+  return String(val);
 }
 
 export async function insertReport(report: WorkspaceReport): Promise<void> {
-  await query(
-    `INSERT INTO service_reports (id, status, share_token_hash, data) VALUES ($1, $2, $3, $4);`,
-    [report.id, report.status, null, JSON.stringify(report)],
+  const docClient = dynamoDocClient();
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames.reports,
+      Item: report,
+    }),
   );
 }
 
 export async function findReport(
   reportId: string,
 ): Promise<WorkspaceReport | null> {
-  const res = await query<{ data: WorkspaceReport }>(
-    `SELECT data FROM service_reports WHERE id = $1;`,
-    [reportId],
+  const docClient = dynamoDocClient();
+  const res = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.reports,
+      Key: { id: reportId },
+    }),
   );
-  if (!res.rows[0]?.data) return null;
-  const rep = { ...res.rows[0].data };
-  delete (rep as { shareTokenHash?: string | null }).shareTokenHash;
-  return rep;
+  if (!res.Item) return null;
+  return cleanReport(res.Item as StoredReport);
 }
 
 export async function issueReportShareLink(
@@ -463,51 +546,79 @@ export async function issueReportShareLink(
   sentAt: string,
   auditEvent: WorkspaceReport["auditTrail"][number],
 ): Promise<"updated" | "missing" | "locked"> {
-  const currentRes = await query<{ status: string; data: WorkspaceReport }>(
-    `SELECT status, data FROM service_reports WHERE id = $1;`,
-    [reportId],
+  const docClient = dynamoDocClient();
+  const current = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.reports,
+      Key: { id: reportId },
+    }),
   );
-  if (currentRes.rowCount === 0) return "missing";
-  const current = currentRes.rows[0];
+  if (!current.Item) return "missing";
+  const report = current.Item as StoredReport;
   if (
     !["Draft", "Correction required", "Awaiting client signature"].includes(
-      current.status,
+      report.status,
     )
   ) {
     return "locked";
   }
 
-  const updatedReport: WorkspaceReport = {
-    ...current.data,
+  const updatedReport: StoredReport = {
+    ...report,
     status: "Awaiting client signature",
+    shareTokenHash,
     sentAt,
-    auditTrail: [...(current.data.auditTrail || []), auditEvent],
+    auditTrail: [...(report.auditTrail || []), auditEvent],
   };
 
-  const res = await query(
-    `UPDATE service_reports
-     SET status = 'Awaiting client signature',
-         share_token_hash = $2,
-         data = $3
-     WHERE id = $1 AND status = $4;`,
-    [reportId, shareTokenHash, JSON.stringify(updatedReport), current.status],
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames.reports,
+      Item: updatedReport,
+    }),
   );
 
-  return (res.rowCount ?? 0) === 1 ? "updated" : "locked";
+  return "updated";
 }
 
 export async function findReportByShareHash(
   shareTokenHash: string,
 ): Promise<WorkspaceReport | null> {
-  const res = await query<{ data: WorkspaceReport }>(
-    `SELECT data FROM service_reports
-     WHERE share_token_hash = $1 AND status IN ('Awaiting client signature', 'Completed');`,
-    [shareTokenHash],
+  const docClient = dynamoDocClient();
+  try {
+    const res = await docClient.send(
+      new QueryCommand({
+        TableName: tableNames.reports,
+        IndexName: "shareTokenHash-index",
+        KeyConditionExpression: "shareTokenHash = :token",
+        ExpressionAttributeValues: { ":token": shareTokenHash },
+      }),
+    );
+    if (res.Items && res.Items.length > 0) {
+      const rep = res.Items[0] as StoredReport;
+      if (["Awaiting client signature", "Completed"].includes(rep.status)) {
+        return cleanReport(rep);
+      }
+    }
+  } catch {
+    // Fallback to Scan if index is updating
+  }
+
+  const scanRes = await docClient.send(
+    new ScanCommand({
+      TableName: tableNames.reports,
+      FilterExpression: "shareTokenHash = :token",
+      ExpressionAttributeValues: { ":token": shareTokenHash },
+    }),
   );
-  if (!res.rows[0]?.data) return null;
-  const rep = { ...res.rows[0].data };
-  delete (rep as { shareTokenHash?: string | null }).shareTokenHash;
-  return rep;
+  if (scanRes.Items && scanRes.Items.length > 0) {
+    const rep = scanRes.Items[0] as StoredReport;
+    if (["Awaiting client signature", "Completed"].includes(rep.status)) {
+      return cleanReport(rep);
+    }
+  }
+
+  return null;
 }
 
 export async function completeReportSignature(
@@ -516,83 +627,97 @@ export async function completeReportSignature(
   acknowledgement: WorkspaceReport["acknowledgement"],
   auditEvent: WorkspaceReport["auditTrail"][number],
 ): Promise<"updated" | "missing" | "invalid-status"> {
-  const currentRes = await query<{ status: string; data: WorkspaceReport }>(
-    `SELECT status, data FROM service_reports WHERE id = $1;`,
-    [reportId],
+  const docClient = dynamoDocClient();
+  const current = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.reports,
+      Key: { id: reportId },
+    }),
   );
-  if (currentRes.rowCount === 0) return "missing";
-  const current = currentRes.rows[0];
-  if (current.status !== "Awaiting client signature") return "invalid-status";
+  if (!current.Item) return "missing";
+  const report = current.Item as StoredReport;
+  if (report.status !== "Awaiting client signature") return "invalid-status";
 
-  const updatedReport: WorkspaceReport = {
-    ...current.data,
+  const updatedReport: StoredReport = {
+    ...report,
     status: "Completed",
     signature,
     acknowledgement,
-    auditTrail: [...(current.data.auditTrail || []), auditEvent],
+    auditTrail: [...(report.auditTrail || []), auditEvent],
   };
 
-  const res = await query(
-    `UPDATE service_reports
-     SET status = 'Completed',
-         data = $2
-     WHERE id = $1 AND status = 'Awaiting client signature';`,
-    [reportId, JSON.stringify(updatedReport)],
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames.reports,
+      Item: updatedReport,
+    }),
   );
 
-  return (res.rowCount ?? 0) === 1 ? "updated" : "invalid-status";
+  return "updated";
 }
 
 export async function authenticateUser(
   username: string,
   password: string,
 ): Promise<UserRecord | null> {
-  const res = await query<StoredUserRow>(
-    `SELECT * FROM users WHERE LOWER(username) = LOWER($1) AND active = true;`,
-    [username.trim()],
+  const docClient = dynamoDocClient();
+  const lowerUser = username.trim().toLowerCase();
+  const scan = await docClient.send(
+    new ScanCommand({
+      TableName: tableNames.users,
+    }),
   );
-  const user = res.rows[0];
-  if (!user || !verifyPassword(password, user.password_hash)) {
+  const user = (scan.Items || []).find(
+    (item) =>
+      String(item.username || "").trim().toLowerCase() === lowerUser &&
+      Boolean(item.active),
+  ) as StoredUser | undefined;
+
+  if (!user || !verifyPassword(password, user.passwordHash)) {
     return null;
   }
-  return userFromRow(user);
+  return userFromStored(user);
 }
 
 export async function readUsers(): Promise<UserRecord[]> {
-  const res = await query<StoredUserRow>(
-    `SELECT * FROM users ORDER BY name ASC;`,
+  const docClient = dynamoDocClient();
+  const res = await docClient.send(
+    new ScanCommand({
+      TableName: tableNames.users,
+    }),
   );
-  return res.rows.map(userFromRow);
+  const users = (res.Items || []) as StoredUser[];
+  return users
+    .map(userFromStored)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function findUser(userId: string): Promise<UserRecord | null> {
-  const res = await query<StoredUserRow>(
-    `SELECT * FROM users WHERE id = $1;`,
-    [userId],
+  const docClient = dynamoDocClient();
+  const res = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.users,
+      Key: { id: userId },
+    }),
   );
-  return res.rows[0] ? userFromRow(res.rows[0]) : null;
+  if (!res.Item) return null;
+  return userFromStored(res.Item as StoredUser);
 }
 
 export async function insertUser(
   record: UserRecord,
   password: string,
 ): Promise<void> {
-  await query(
-    `INSERT INTO users (id, username, email, password_hash, name, phone, designation, role, active, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);`,
-    [
-      record.id,
-      record.username,
-      record.email,
-      hashPassword(password),
-      record.name,
-      record.phone || "",
-      record.designation || "",
-      record.role,
-      record.active,
-      record.createdAt,
-      record.updatedAt,
-    ],
+  const docClient = dynamoDocClient();
+  const stored: StoredUser = {
+    ...record,
+    passwordHash: hashPassword(password),
+  };
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames.users,
+      Item: stored,
+    }),
   );
 }
 
@@ -601,59 +726,31 @@ export async function replaceUser(
   record: UserRecord,
   password?: string,
 ): Promise<boolean> {
-  let res;
-  if (password) {
-    res = await query(
-      `UPDATE users
-       SET username = $2,
-           email = $3,
-           name = $4,
-           phone = $5,
-           designation = $6,
-           role = $7,
-           active = $8,
-           updated_at = $9,
-           password_hash = $10
-       WHERE id = $1;`,
-      [
-        userId,
-        record.username,
-        record.email,
-        record.name,
-        record.phone || "",
-        record.designation || "",
-        record.role,
-        record.active,
-        record.updatedAt,
-        hashPassword(password),
-      ],
-    );
-  } else {
-    res = await query(
-      `UPDATE users
-       SET username = $2,
-           email = $3,
-           name = $4,
-           phone = $5,
-           designation = $6,
-           role = $7,
-           active = $8,
-           updated_at = $9
-       WHERE id = $1;`,
-      [
-        userId,
-        record.username,
-        record.email,
-        record.name,
-        record.phone || "",
-        record.designation || "",
-        record.role,
-        record.active,
-        record.updatedAt,
-      ],
-    );
-  }
-  return (res.rowCount ?? 0) === 1;
+  const docClient = dynamoDocClient();
+  const current = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.users,
+      Key: { id: userId },
+    }),
+  );
+  if (!current.Item) return false;
+  const currentStored = current.Item as StoredUser;
+
+  const stored: StoredUser = {
+    ...record,
+    id: userId,
+    passwordHash: password
+      ? hashPassword(password)
+      : currentStored.passwordHash,
+  };
+
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames.users,
+      Item: stored,
+    }),
+  );
+  return true;
 }
 
 export async function updateUserProfile(
@@ -661,55 +758,42 @@ export async function updateUserProfile(
   values: Pick<UserRecord, "name" | "email" | "phone" | "designation">,
   password?: string,
 ): Promise<UserRecord | null> {
-  const now = new Date().toISOString();
-  let res;
-  if (password) {
-    res = await query<StoredUserRow>(
-      `UPDATE users
-       SET name = $2,
-           email = $3,
-           phone = $4,
-           designation = $5,
-           updated_at = $6,
-           password_hash = $7
-       WHERE id = $1 AND active = true
-       RETURNING *;`,
-      [
-        userId,
-        values.name,
-        values.email,
-        values.phone || "",
-        values.designation || "",
-        now,
-        hashPassword(password),
-      ],
-    );
-  } else {
-    res = await query<StoredUserRow>(
-      `UPDATE users
-       SET name = $2,
-           email = $3,
-           phone = $4,
-           designation = $5,
-           updated_at = $6
-       WHERE id = $1 AND active = true
-       RETURNING *;`,
-      [
-        userId,
-        values.name,
-        values.email,
-        values.phone || "",
-        values.designation || "",
-        now,
-      ],
-    );
-  }
-  return res.rows[0] ? userFromRow(res.rows[0]) : null;
+  const docClient = dynamoDocClient();
+  const current = await docClient.send(
+    new GetCommand({
+      TableName: tableNames.users,
+      Key: { id: userId },
+    }),
+  );
+  if (!current.Item || !current.Item.active) return null;
+  const user = current.Item as StoredUser;
+
+  const updated: StoredUser = {
+    ...user,
+    ...values,
+    updatedAt: new Date().toISOString(),
+    passwordHash: password ? hashPassword(password) : user.passwordHash,
+  };
+
+  await docClient.send(
+    new PutCommand({
+      TableName: tableNames.users,
+      Item: updated,
+    }),
+  );
+
+  return userFromStored(updated);
 }
 
 export async function removeUser(userId: string): Promise<boolean> {
-  const res = await query(`DELETE FROM users WHERE id = $1;`, [userId]);
-  return (res.rowCount ?? 0) === 1;
+  const docClient = dynamoDocClient();
+  await docClient.send(
+    new DeleteCommand({
+      TableName: tableNames.users,
+      Key: { id: userId },
+    }),
+  );
+  return true;
 }
 
 export async function userLoginExists(
@@ -717,17 +801,24 @@ export async function userLoginExists(
   email: string,
   excludedId?: string,
 ): Promise<"username" | "email" | null> {
-  const userRes = await query<{ id: string }>(
-    `SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND ($2::text IS NULL OR id != $2);`,
-    [username.trim(), excludedId || null],
+  const docClient = dynamoDocClient();
+  const scan = await docClient.send(
+    new ScanCommand({
+      TableName: tableNames.users,
+    }),
   );
-  if ((userRes.rowCount ?? 0) > 0) return "username";
+  const lowerUser = username.trim().toLowerCase();
+  const lowerEmail = email.trim().toLowerCase();
 
-  const emailRes = await query<{ id: string }>(
-    `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND ($2::text IS NULL OR id != $2);`,
-    [email.trim(), excludedId || null],
-  );
-  if ((emailRes.rowCount ?? 0) > 0) return "email";
+  for (const item of scan.Items || []) {
+    if (item.id === excludedId) continue;
+    if (String(item.username || "").trim().toLowerCase() === lowerUser) {
+      return "username";
+    }
+    if (String(item.email || "").trim().toLowerCase() === lowerEmail) {
+      return "email";
+    }
+  }
 
   return null;
 }
